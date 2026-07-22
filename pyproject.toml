@@ -1,7 +1,36 @@
 [project]
 name = "deteccion-incendios-grupo"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Detección de incendios forestales con datos satelitales y cómputo paralelo/distribuido (Kabré)"
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = []
+requires-python = ">=3.11"
+dependencies = [
+    "polars>=1.0",
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+    "dask[dataframe]>=2024.1",
+    "distributed>=2024.1",
+    "matplotlib>=3.8",
+    "plotly>=5.20",
+    "tabulate>=0.9",
+]
+
+[project.optional-dependencies]
+# Aceleración por GPU (Etapa 4). Requiere GPU NVIDIA + CUDA; instalar con conda
+# desde los canales rapidsai/nvidia, no con pip.
+gpu = [
+    "cudf-cu12",
+    "cuml-cu12",
+]
+# Aprendizaje profundo para la rama de imágenes (Etapa 4)
+dl = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+]
+notebooks = [
+    "jupyterlab>=4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

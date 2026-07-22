@@ -1,0 +1,450 @@
+%=========================================================================
+%  ENTREGA 1 -- FUNDAMENTOS Y DISEÑO DEL PROYECTO
+%  Curso: Computación Paralela y Distribuida (TTCT0017) -- LEAD University
+%  Profesor: Johansell Villalobos Cubillo
+%  Tema: Detección de Incendios Forestales con Imágenes Satelitales
+%
+%  INSTRUCCIONES DE USO EN OVERLEAF
+%  1. Crea un proyecto nuevo en blanco en Overleaf.
+%  2. Pega este archivo completo como "main.tex".
+%  3. Compilador recomendado: pdfLaTeX. Bibliografía: BibTeX.
+%  4. La bibliografía va embebida con \begin{thebibliography}, así que
+%     NO necesitas un archivo .bib aparte: compila directamente.
+%  5. Si quieres insertar el diagrama del pipeline como imagen propia,
+%     sustituye la figura ASCII/TikZ de la Sección VII.
+%=========================================================================
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% ---- Codificación e idioma español ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+
+% ---- Paquetes de utilidades ----
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc}
+\usepackage{listings}
+
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+
+% ---- Estilo para fragmentos de código Python ----
+\lstdefinestyle{py}{
+  language=Python,
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{blue!70!black},
+  commentstyle=\color{green!50!black}\itshape,
+  stringstyle=\color{orange!80!black},
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+  breaklines=true, frame=single, framesep=4pt,
+  showstringspaces=false, columns=fullflexible, keepspaces=true
+}
+
+% Evita advertencias de babel con IEEEtran
+\addto\captionsspanish{\renewcommand{\figurename}{Fig.}}
+\addto\captionsspanish{\renewcommand{\tablename}{TABLA}}
+
+\begin{document}
+
+% ============================== TÍTULO ==============================
+\title{Detección de Incendios Forestales con Imágenes Satelitales mediante un Pipeline de Cómputo Paralelo y Distribuido\\
+\large{Entrega 1: Fundamentos y Diseño del Proyecto}}
+
+\author{
+\IEEEauthorblockN{Allan Arnulfo Montes Monge, Esteban Gutiérrez Saborío, Maria Moroney Sole,\\ Marlon Mora Delgado y Robson Sthiffen Calvo Ortega}
+\IEEEauthorblockA{\textit{Curso TTCT0017 -- Computación Paralela y Distribuida}\\
+\textit{LEAD University}\\
+Profesor: Johansell Villalobos Cubillo\\
+San José, Costa Rica}
+}
+
+\maketitle
+
+% ============================== RESUMEN ==============================
+\begin{abstract}
+Los incendios forestales constituyen una amenaza creciente para los ecosistemas, la infraestructura y la vida humana, agravada por el cambio climático. La detección temprana y el análisis de grandes volúmenes de datos de teledetección requieren capacidades de cómputo que superan a los enfoques secuenciales tradicionales. Este documento corresponde a la primera entrega del proyecto del curso de Computación Paralela y Distribuida y presenta los fundamentos y el diseño de un sistema para la detección de incendios forestales a partir de dos fuentes de datos masivas: los registros tabulares de puntos de calor de NASA FIRMS (superiores a 2~GB) y un conjunto de imágenes satelitales clasificadas de aproximadamente 6.5~GB. Se justifica la selección de un ecosistema de herramientas de cómputo paralelo y acelerado por GPU (Dask, Polars, cuDF, PyTorch, RAPIDS cuML, Plotly y Dash), se definen los objetivos del proyecto, se describe el diseño del pipeline computacional por etapas y se establece el plan de trabajo para las cuatro entregas. El propósito es disponer de una base sólida que guíe la implementación posterior y el análisis de rendimiento (speedup, eficiencia, escalabilidad, throughput y utilización de recursos).
+\end{abstract}
+
+\begin{IEEEkeywords}
+incendios forestales, teledetección, cómputo paralelo, cómputo distribuido, GPU, Dask, RAPIDS, aprendizaje profundo, NASA FIRMS, escalabilidad.
+\end{IEEEkeywords}
+
+% ============================== I. INTRODUCCIÓN ==============================
+\section{Introducción}
+\label{sec:intro}
+
+Los incendios forestales se han convertido en uno de los desastres naturales de mayor impacto a escala global. Su frecuencia, extensión y severidad han aumentado de manera sostenida durante las últimas décadas, impulsadas por el incremento de las temperaturas medias, los periodos prolongados de sequía y la acumulación de combustible vegetal. Las consecuencias abarcan la pérdida de biodiversidad, la emisión masiva de gases de efecto invernadero, el deterioro de la calidad del aire, los daños a infraestructura y, en los casos más graves, la pérdida de vidas humanas. En este contexto, la capacidad de detectar focos de calor de forma temprana y de modelar el riesgo de incendio adquiere un valor estratégico para la gestión de emergencias y la protección ambiental.
+
+La teledetección satelital ofrece una fuente de información privilegiada para este problema, ya que permite observar de manera continua y a escala planetaria las anomalías térmicas y las condiciones de la superficie terrestre. Sin embargo, el volumen de datos generado por las misiones satelitales modernas plantea un desafío computacional considerable. Los productos de fuego activo distribuidos por sistemas como el \textit{Fire Information for Resource Management System} (FIRMS) de la NASA acumulan millones de registros, mientras que los repositorios de imágenes satelitales etiquetadas alcanzan varios gigabytes. Procesar, analizar y modelar estos datos con herramientas secuenciales tradicionales resulta lento e impráctico, lo que motiva el uso de técnicas de cómputo paralelo y distribuido.
+
+La motivación de este proyecto es doble. Por un lado, abordar un problema de relevancia ambiental y social mediante el análisis de datos reales de teledetección. Por otro, aplicar de manera concreta los conceptos del curso de Computación Paralela y Distribuida: paralelismo multinúcleo, procesamiento distribuido, aceleración por GPU y aprendizaje profundo, evaluando rigurosamente el rendimiento del sistema mediante métricas como el \textit{speedup}, la eficiencia, la escalabilidad fuerte y débil, el \textit{throughput} y la utilización de recursos.
+
+El presente documento constituye la primera de cuatro entregas y tiene un carácter puramente documental. Su objetivo es establecer los fundamentos teóricos y el diseño del proyecto. La Sección~\ref{sec:related} revisa el trabajo relacionado; la Sección~\ref{sec:marco} presenta el marco teórico; la Sección~\ref{sec:dataset} describe los conjuntos de datos; la Sección~\ref{sec:tools} justifica la selección de herramientas; la Sección~\ref{sec:objetivos} enuncia los objetivos; la Sección~\ref{sec:pipeline} detalla el diseño del pipeline computacional; y la Sección~\ref{sec:plan} define el plan de trabajo y el cronograma de las cuatro entregas.
+
+% ============================== II. TRABAJO RELACIONADO ==============================
+\section{Trabajo Relacionado}
+\label{sec:related}
+
+La detección y predicción de incendios forestales mediante teledetección y aprendizaje automático constituye un campo de investigación activo. Los algoritmos de detección de fuego activo operacionales se basan en la firma térmica de los incendios en las bandas del infrarrojo medio. El algoritmo de Colección 6 para el sensor MODIS, propuesto por Giglio \textit{et al.}~\cite{giglio2016}, es la base de los productos de fuego activo que distribuye la NASA y mejora la deteccción de incendios pequeños y la reducción de falsas alarmas respecto a versiones anteriores. De forma complementaria, Schroeder \textit{et al.}~\cite{schroeder2014} desarrollaron el producto de fuego activo de 375~m del sensor VIIRS, que ofrece mayor resolución espacial y mejor desempeño nocturno, permitiendo detectar focos de calor de menor tamaño.
+
+En paralelo, el uso de aprendizaje automático y profundo para la ciencia de incendios ha crecido de manera notable. Jain \textit{et al.}~\cite{jain2020} ofrecen una revisión exhaustiva de las aplicaciones de aprendizaje automático en la gestión y la ciencia de incendios, abarcando la detección, la predicción de la propagación y la evaluación del riesgo. En el ámbito de la clasificación de imágenes satelitales, las redes neuronales convolucionales (CNN) se han consolidado como el enfoque dominante. Arquitecturas como las redes residuales profundas de He \textit{et al.}~\cite{he2016} y la red U-Net de Ronneberger \textit{et al.}~\cite{ronneberger2015} —originalmente concebida para segmentación biomédica— se han adaptado con éxito a tareas de clasificación y segmentación de cobertura terrestre y zonas quemadas.
+
+Desde la perspectiva del cómputo de altas prestaciones aplicado a datos masivos, Dask~\cite{rocklin2015} se ha establecido como un marco de referencia para la paralelización de cargas de trabajo analíticas en Python, tanto en entornos multinúcleo como distribuidos. El ecosistema RAPIDS~\cite{rapids} extiende este modelo a las unidades de procesamiento gráfico mediante bibliotecas como cuDF y cuML, mientras que Polars~\cite{polars} ofrece un motor de \textit{dataframes} columnar de alto rendimiento construido sobre Apache Arrow. La combinación de estas herramientas con marcos de aprendizaje profundo como PyTorch~\cite{paszke2019} habilita pipelines de extremo a extremo capaces de procesar volúmenes de datos del orden de los gigabytes con aceleración por GPU. Nuestro proyecto se ubica en la intersección de estas líneas: aplica modelos de aprendizaje automático y profundo a datos reales de teledetección de incendios, pero pone un énfasis particular en el diseño paralelo y distribuido del pipeline y en la evaluación cuantitativa de su rendimiento.
+
+% ============================== III. MARCO TEÓRICO ==============================
+\section{Marco Teórico}
+\label{sec:marco}
+
+\subsection{Teledetección de incendios forestales}
+La detección satelital de incendios se fundamenta en que los focos de calor emiten radiación con una intensidad característica en la banda del infrarrojo medio (en torno a los 4~$\mu$m). Los sensores como MODIS y VIIRS miden la temperatura de brillo de la superficie y aplican algoritmos de umbral contextual para distinguir píxeles con anomalías térmicas de su entorno. Cada detección se georreferencia y se acompaña de atributos como la potencia radiativa del fuego (FRP), la confianza de la detección, la fecha y la hora de adquisición. El producto resultante es un conjunto de datos tabular de puntos de calor que puede analizarse espacial y temporalmente.
+
+\subsection{Cómputo paralelo y distribuido}
+El cómputo paralelo busca reducir el tiempo de ejecución de un problema dividiéndolo en subtareas que se ejecutan simultáneamente sobre múltiples unidades de procesamiento. Se distinguen, entre otros, el paralelismo multinúcleo (varios núcleos de una misma CPU con memoria compartida), el procesamiento distribuido (varios nodos que cooperan mediante paso de mensajes) y la aceleración por GPU (miles de hilos ligeros operando sobre un modelo de ejecución SIMT). El cómputo distribuido, además, permite escalar el almacenamiento y el procesamiento más allá de los límites de una sola máquina, lo que resulta indispensable cuando los datos superan la memoria disponible.
+
+\subsection{Métricas de rendimiento}
+La evaluación de un sistema paralelo se apoya en varias métricas fundamentales. El \textit{speedup} se define como
+\begin{equation}
+S(p) = \frac{T_1}{T_p},
+\label{eq:speedup}
+\end{equation}
+donde $T_1$ es el tiempo de ejecución secuencial y $T_p$ el tiempo con $p$ unidades de procesamiento. La eficiencia se expresa como
+\begin{equation}
+E(p) = \frac{S(p)}{p} = \frac{T_1}{p\,T_p}.
+\label{eq:eff}
+\end{equation}
+El límite teórico del \textit{speedup} está acotado por la ley de Amdahl~\cite{amdahl1967}, que para una fracción paralelizable $f$ establece
+\begin{equation}
+S(p) = \frac{1}{(1-f) + \dfrac{f}{p}}.
+\label{eq:amdahl}
+\end{equation}
+La ley de Gustafson~\cite{gustafson1988} ofrece una perspectiva complementaria orientada al escalado del tamaño del problema, relevante para la \textit{escalabilidad débil}. Junto a estas medidas, el análisis considerará la \textit{escalabilidad fuerte} (tamaño de problema fijo, número de recursos creciente), el \textit{throughput} (registros o imágenes procesadas por unidad de tiempo), el uso de memoria, la utilización de la GPU y el balance de carga entre trabajadores.
+
+\subsection{Aprendizaje automático y profundo}
+El modelado predictivo se abordará con dos familias de técnicas. Para los datos tabulares de FIRMS se emplearán algoritmos clásicos de aprendizaje automático (por ejemplo, clasificación y agrupamiento), acelerados por GPU mediante RAPIDS cuML. Para las imágenes satelitales se utilizarán redes neuronales convolucionales implementadas en PyTorch, que aprenden de forma jerárquica representaciones espaciales discriminativas para distinguir zonas con riesgo de incendio de zonas sin riesgo. El entrenamiento de estos modelos es intensivo en cómputo y se beneficia directamente de la paralelización en GPU y, potencialmente, del entrenamiento distribuido sobre múltiples dispositivos.
+
+% ============================== IV. DESCRIPCIÓN DEL DATASET ==============================
+\section{Descripción del Dataset}
+\label{sec:dataset}
+
+El proyecto se sustenta en dos conjuntos de datos reales, complementarios y de gran tamaño, que en conjunto superan ampliamente el requisito mínimo de 1~GB establecido por el curso.
+
+\subsection{NASA FIRMS: datos tabulares de puntos de calor}
+El \textit{Fire Information for Resource Management System} (FIRMS) de la NASA distribuye datos de fuego activo en tiempo casi real, generalmente disponibles dentro de las tres horas posteriores a la observación satelital~\cite{nasafirms}. Los datos provienen de los sensores MODIS (a bordo de los satélites Terra y Aqua, con resolución espacial de 1~km) y VIIRS (a bordo de Suomi NPP y NOAA-20, con resolución de 375~m). Cada registro representa el centro de un píxel en el que se detectó una anomalía térmica e incluye atributos como latitud, longitud, temperatura de brillo, potencia radiativa del fuego, nivel de confianza, fecha, hora y satélite de origen.
+
+Para este proyecto se utilizarán los archivos históricos y de tiempo casi real en formato CSV/Parquet, cuyo volumen global supera los 2~GB. La naturaleza tabular, masiva y de alta cardinalidad de estos datos los hace idóneos para ilustrar el procesamiento paralelo y distribuido de \textit{dataframes} con Dask, Polars y cuDF, así como para el análisis exploratorio espacio-temporal de la actividad de incendios.
+
+\subsection{Kaggle Wildfire Prediction Dataset: imágenes satelitales}
+El segundo conjunto de datos es el \textit{Wildfire Prediction Dataset}~\cite{kaggle}, disponible públicamente en Kaggle. Está compuesto por imágenes satelitales de 350$\times$350 píxeles extraídas mediante la API de MapBox a partir de coordenadas geográficas de zonas que experimentaron incendios en Canadá, con datos de origen del gobierno de Quebec publicados bajo licencia Creative Commons Attribution 4.0. El conjunto está etiquetado en dos clases: \textit{wildfire} (22\,710 imágenes) y \textit{no wildfire} (20\,140 imágenes), para un total de 42\,850 imágenes y un tamaño aproximado de 6.5~GB.
+
+Este conjunto es apropiado para tareas de visión por computadora y aprendizaje profundo, y su tamaño justifica el uso de carga de datos paralela, aumento de datos y entrenamiento acelerado por GPU.
+
+\subsection{Justificación de la escala}
+La combinación de ambos conjuntos —más de 2~GB de datos tabulares y aproximadamente 6.5~GB de imágenes— totaliza cerca de 8.5~GB de datos heterogéneos. Esta escala es deliberada: por un lado, excede con holgura el umbral de 1~GB exigido y, por otro, plantea retos genuinos de gestión de memoria, particionado y paralelización que no surgirían con conjuntos pequeños. La heterogeneidad (datos tabulares y de imagen) permite, además, ejercitar de forma natural distintas modalidades de paralelismo: procesamiento distribuido de \textit{dataframes} para FIRMS y aprendizaje profundo acelerado por GPU para las imágenes. La Tabla~\ref{tab:datasets} resume las características de ambas fuentes.
+
+\begin{table}[t]
+\caption{Resumen de los conjuntos de datos del proyecto}
+\label{tab:datasets}
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{2.4cm} p{2.5cm} p{2.5cm}}
+\toprule
+\textbf{Característica} & \textbf{NASA FIRMS} & \textbf{Kaggle Wildfire} \\
+\midrule
+Tipo de dato & Tabular (puntos de calor) & Imágenes satelitales \\
+Formato & CSV / Parquet & PNG (350$\times$350) \\
+Tamaño & $>$ 2~GB & $\approx$ 6.5~GB \\
+Volumen & Millones de registros & 42\,850 imágenes \\
+Etiquetas & FRP, confianza, fecha & wildfire / no wildfire \\
+Fuente & MODIS / VIIRS (NASA) & MapBox / Quebec \\
+Uso previsto & ML tabular + EDA & Aprendizaje profundo \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================== DEFINICIÓN DEL PROBLEMA ==============================
+\section{Definición del Problema, Variables e Hipótesis}
+\label{sec:problema}
+
+\subsection{Planteamiento del problema}
+Los sistemas operacionales de detección satelital de incendios, como FIRMS, generan un gran número de detecciones de puntos de calor, pero no todas corresponden a incendios forestales reales: fuentes de calor intensas, reflejos, superficies calientes o ruido del sensor pueden producir \textit{falsas alarmas} (falsos positivos). Estas falsas alarmas tienen un costo operativo real, pues desvían recursos de respuesta hacia eventos inexistentes. Reducir su proporción ha sido, de hecho, uno de los principales motores de la evolución de los algoritmos de detección~\cite{giglio2016}.
+
+El problema que aborda este proyecto es, por tanto: \textit{a partir de la combinación de dos o más variables físicas y contextuales de cada detección, discriminar las detecciones confiables de aquellas que probablemente corresponden a falsas alarmas, con el fin de reducir la tasa de falsos positivos.}
+
+\subsection{Definición operativa de falsa alarma}
+El conjunto de datos de FIRMS contiene únicamente detecciones (no incluye una etiqueta explícita de ``verdadero'' o ``falso''). Por ello, en este trabajo se adopta como \textit{proxy} el atributo \texttt{confidence}, que expresa el nivel de confianza de la detección. Se define operativamente:
+\begin{itemize}
+\item \textbf{Detección válida:} registros con \texttt{confidence} media o alta.
+\item \textbf{Probable falsa alarma:} registros con \texttt{confidence} baja.
+\end{itemize}
+De este modo, el problema se formaliza como una tarea de \textbf{clasificación binaria} cuyo objetivo es identificar las probables falsas alarmas a partir de las restantes variables, sin emplear directamente \texttt{confidence} como predictora.
+
+\subsection{Variables del modelo}
+La Tabla~\ref{tab:variables} resume las variables. La variable \textit{respuesta} (\textit{target}) es la clase binaria derivada de \texttt{confidence}. Las variables \textit{predictoras} son de dos tipos: físicas (asociadas a la firma térmica y la geometría del píxel) y contextuales (espacio-temporales). Se destaca la variable derivada \texttt{brightness} $-$ \texttt{bright\_t31}: dado que un incendio real presenta una temperatura de brillo muy superior a la de su entorno, una diferencia pequeña es indicio de una posible falsa alarma.
+
+\begin{table}[t]
+\caption{Variables para el modelo de reducción de falsas alarmas}
+\label{tab:variables}
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{2.3cm} p{2.0cm} p{2.9cm}}
+\toprule
+\textbf{Variable} & \textbf{Rol} & \textbf{Descripción} \\
+\midrule
+Clase (de \texttt{confidence}) & Respuesta & Válida vs. probable falsa alarma \\
+\texttt{brightness} & Predictora física & Temperatura de brillo (K) \\
+\texttt{bright\_t31} & Predictora física & Temperatura de fondo, banda 31 \\
+$\Delta$T (\texttt{brightness}$-$\texttt{bright\_t31}) & Predictora derivada & Contraste térmico foco--entorno \\
+\texttt{frp} & Predictora física & Potencia radiativa del fuego (MW) \\
+\texttt{scan}, \texttt{track} & Predictoras físicas & Geometría/tamaño del píxel \\
+\texttt{daynight}, \texttt{acq\_time} & Contextuales & Momento de la detección \\
+\texttt{latitude}, \texttt{longitude} & Contextuales & Ubicación del foco \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Hipótesis y evaluación}
+Se plantea la siguiente hipótesis: \textit{la combinación del contraste térmico ($\Delta$T $=$ \texttt{brightness} $-$ \texttt{bright\_t31}) con la potencia radiativa (\texttt{frp}) permite reducir de forma significativa la proporción de falsas alarmas respecto a un criterio de umbral simple sobre una sola variable.} Para contrastarla se compararán dos enfoques: una regla de umbral univariada (línea base) y un clasificador supervisado (RAPIDS cuML). Dado que el objetivo es reducir falsos positivos, las métricas centrales son la \textbf{precisión} y la \textbf{tasa de falsas alarmas}, complementadas con el \textit{recall} —para no descartar incendios reales— y la matriz de confusión.
+
+% ============================== V. JUSTIFICACIÓN DE HERRAMIENTAS ==============================
+\section{Justificación Técnica de las Herramientas Paralelas}
+\label{sec:tools}
+
+La selección de herramientas responde a la necesidad de procesar de manera eficiente datos heterogéneos y de gran volumen, cubriendo las distintas etapas del pipeline con tecnologías especializadas.
+
+\textbf{Dask}~\cite{rocklin2015} se elige como motor de paralelismo y cómputo distribuido de propósito general. Permite particionar los \textit{dataframes} de FIRMS en bloques que se procesan en paralelo sobre múltiples núcleos o nodos, gestionando automáticamente el grafo de tareas y la ejecución \textit{out-of-core} cuando los datos exceden la memoria. Es la pieza central para demostrar paralelismo multinúcleo y procesamiento distribuido.
+
+\textbf{Polars}~\cite{polars} aporta un motor de \textit{dataframes} columnar escrito en Rust, con ejecución multinúcleo y evaluación perezosa. Su modelo basado en Apache Arrow ofrece un rendimiento muy superior al de las bibliotecas tradicionales para operaciones de filtrado, agregación y transformación, lo que lo hace idóneo para el preprocesamiento eficiente de los datos tabulares.
+
+\textbf{cuDF} (parte de RAPIDS)~\cite{rapids} traslada las operaciones de \textit{dataframe} a la GPU, ofreciendo aceleraciones de uno o dos órdenes de magnitud sobre operaciones columnares respecto a la CPU. Junto con \textbf{RAPIDS cuML}, que provee algoritmos de aprendizaje automático acelerados por GPU con una interfaz compatible con scikit-learn, permite construir un flujo tabular completo sobre la GPU.
+
+\textbf{PyTorch}~\cite{paszke2019} es el marco seleccionado para el aprendizaje profundo sobre las imágenes satelitales. Ofrece diferenciación automática, ejecución acelerada por GPU y soporte para entrenamiento distribuido (\textit{Distributed Data Parallel}), lo que habilita explícitamente el requisito de aprendizaje profundo y, potencialmente, distribuido. Para el manejo eficiente de formatos de datos en memoria se empleará \textbf{PyArrow}.
+
+Finalmente, \textbf{Plotly} y \textbf{Dash}~\cite{plotly} se utilizarán para la capa de visualización interactiva, permitiendo construir un \textit{dashboard} web que comunique los resultados del análisis y del modelado de forma dinámica. En conjunto, esta pila tecnológica cubre las seis etapas obligatorias del proyecto y satisface los requisitos de paralelismo multinúcleo, procesamiento distribuido, aceleración por GPU y aprendizaje profundo.
+
+% ============================== VI. OBJETIVOS ==============================
+\section{Objetivos Específicos del Proyecto}
+\label{sec:objetivos}
+
+\subsection{Objetivo general}
+Diseñar e implementar un pipeline de cómputo paralelo y distribuido para la detección y el análisis de incendios forestales a partir de datos satelitales tabulares y de imagen, evaluando rigurosamente su rendimiento.
+
+\subsection{Objetivos específicos}
+\begin{enumerate}
+\item \textbf{Adquisición y gestión de datos.} Adquirir, almacenar y particionar los conjuntos de NASA FIRMS ($>$2~GB) y Kaggle Wildfire ($\approx$6.5~GB) en formatos eficientes para el procesamiento paralelo.
+\item \textbf{Preprocesamiento paralelo/distribuido.} Implementar la limpieza, transformación y normalización de los datos tabulares con Dask, Polars y cuDF, y la carga y aumento paralelo de imágenes para el modelo de aprendizaje profundo.
+\item \textbf{Análisis exploratorio y estadístico.} Caracterizar la distribución espacio-temporal de los focos de calor y las propiedades de las imágenes mediante análisis estadístico.
+\item \textbf{Modelado de ML/IA.} Entrenar un modelo de aprendizaje automático sobre los datos tabulares (RAPIDS cuML) y una red neuronal convolucional sobre las imágenes (PyTorch) para clasificar zonas con y sin riesgo de incendio.
+\item \textbf{Postprocesamiento y análisis de resultados.} Evaluar los modelos con métricas adecuadas y analizar el rendimiento computacional (speedup, eficiencia, escalabilidad fuerte y débil, throughput, uso de memoria y utilización de GPU).
+\item \textbf{Visualización interactiva.} Desarrollar un \textit{dashboard} con Plotly y Dash que integre los hallazgos del análisis y las predicciones del modelo.
+\end{enumerate}
+
+% ============================== VII. DISEÑO DEL PIPELINE ==============================
+\section{Diseño del Pipeline Computacional}
+\label{sec:pipeline}
+
+El sistema se organiza en seis etapas encadenadas que reflejan las etapas obligatorias del curso. La Fig.~\ref{fig:pipeline} muestra el flujo general, en el que la rama tabular (FIRMS) y la rama de imágenes (Kaggle) se procesan en paralelo y convergen en la capa de análisis de resultados y visualización.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=6mm and 5mm,
+  every node/.style={font=\scriptsize},
+  stage/.style={rectangle, rounded corners, draw, thick, fill=blue!8,
+                text width=2.9cm, minimum height=8mm, align=center},
+  branch/.style={rectangle, rounded corners, draw, thick, fill=green!8,
+                text width=2.9cm, minimum height=8mm, align=center},
+  arr/.style={-{Stealth[length=2mm]}, thick}
+]
+\node[stage] (data) {1. Adquisición y gestión de datos\\ \textit{(FIRMS + Kaggle)}};
+
+\node[branch, below left=8mm and -0.5cm of data] (pre1) {2a. Preprocesamiento tabular\\ \textit{Dask / Polars / cuDF}};
+\node[branch, below right=8mm and -0.5cm of data] (pre2) {2b. Preproc. de imágenes\\ \textit{PyTorch / PyArrow}};
+
+\node[branch, below=6mm of pre1] (eda) {3. Análisis exploratorio\\ \textit{estadístico (EDA)}};
+\node[branch, below=6mm of pre2] (dl) {4b. CNN (GPU)\\ \textit{PyTorch}};
+
+\node[branch, below=6mm of eda] (ml) {4a. ML tabular\\ \textit{RAPIDS cuML}};
+
+\node[stage, below=22mm of data] (post) {5. Postprocesamiento y análisis de rendimiento};
+\node[stage, below=6mm of post] (vis) {6. Visualización interactiva\\ \textit{Plotly / Dash}};
+
+\draw[arr] (data) -- (pre1);
+\draw[arr] (data) -- (pre2);
+\draw[arr] (pre1) -- (eda);
+\draw[arr] (pre2) -- (dl);
+\draw[arr] (eda) -- (ml);
+\draw[arr] (ml.south) to[out=-90,in=180] (post.west);
+\draw[arr] (dl.south) to[out=-90,in=0] (post.east);
+\draw[arr] (post) -- (vis);
+\end{tikzpicture}
+\caption{Pipeline computacional del proyecto. La rama tabular (verde, izquierda) y la rama de imágenes (verde, derecha) se ejecutan en paralelo y convergen en el postprocesamiento y la visualización.}
+\label{fig:pipeline}
+\end{figure}
+
+\textbf{Etapa 1 -- Adquisición y gestión de datos.} Descarga y almacenamiento de los conjuntos FIRMS y Kaggle, conversión a formatos columnar (Parquet) y particionado adecuado para el procesamiento paralelo.
+
+\textbf{Etapa 2 -- Preprocesamiento paralelo/distribuido.} La rama tabular limpia, filtra y transforma los registros de FIRMS con Dask, Polars y cuDF. La rama de imágenes implementa la decodificación, el redimensionamiento, la normalización y el aumento de datos con cargadores paralelos de PyTorch.
+
+\textbf{Etapa 3 -- Análisis exploratorio y estadístico.} Caracterización espacio-temporal de los focos de calor y análisis estadístico de las variables, apoyado en cómputo paralelo para acelerar las agregaciones.
+
+\textbf{Etapa 4 -- Modelado de ML/IA.} Entrenamiento de un modelo de clasificación tabular con RAPIDS cuML y de una red convolucional con PyTorch sobre GPU, con posibilidad de entrenamiento distribuido.
+
+\textbf{Etapa 5 -- Postprocesamiento y análisis de resultados.} Evaluación de la calidad predictiva de los modelos y, de forma central, medición del rendimiento computacional con las métricas definidas en la Sección~\ref{sec:marco}.
+
+\textbf{Etapa 6 -- Visualización interactiva.} Integración de los resultados en un \textit{dashboard} web con Plotly y Dash, accesible y reproducible desde el repositorio del proyecto.
+
+% ============================== TRABAJO PRELIMINAR ==============================
+\section{Trabajo Preliminar: Prototipo de Preprocesamiento}
+\label{sec:prototipo}
+
+Con el fin de validar la viabilidad del diseño propuesto, se desarrolló un prototipo inicial que materializa las dos primeras etapas del pipeline sobre los datos tabulares de NASA FIRMS. Este trabajo se implementó en un \textit{notebook} de Python y se encuentra versionado en el repositorio del proyecto.
+
+\subsection{Gestión de datos (Etapa 1)}
+Los registros de puntos de calor descargados de FIRMS se consolidaron en un único archivo en formato columnar Apache Parquet (\texttt{incendios\_global\_consolidado.parquet}). La elección de Parquet responde a su compresión eficiente, su lectura selectiva por columnas y su compatibilidad nativa con los motores de procesamiento paralelo empleados en el proyecto.
+
+\subsection{Preprocesamiento con Polars (Etapa 2)}
+La carga y el procesamiento inicial se realizaron con Polars empleando su \textit{motor de ejecución en streaming}, que procesa los datos por bloques sin necesidad de cargar todo el conjunto en memoria de forma simultánea. El Listado~\ref{lst:carga} muestra la función de carga basada en evaluación perezosa (\texttt{scan\_parquet}) y ejecución en streaming.
+
+\begin{lstlisting}[style=py, caption={Carga en streaming del dataset consolidado con Polars.}, label={lst:carga}]
+import polars as pl
+
+def cargar_datos_completos(ruta):
+    df = (
+        pl.scan_parquet(ruta)      # evaluacion perezosa
+          .collect(engine="streaming")  # ejecucion por bloques
+    )
+    return df
+\end{lstlisting}
+
+\subsection{Medición de rendimiento}
+Sobre esta base se instrumentó una primera medición del rendimiento del preprocesamiento, capturando el tiempo de ejecución y el \textit{throughput} tanto en filas por segundo como en megabytes por segundo. Se evaluaron tres operaciones representativas del flujo de trabajo, resumidas en la Tabla~\ref{tab:proto}: la carga completa del conjunto, un filtrado por nivel de confianza (\texttt{confidence}) y una agregación por satélite de origen. Los resultados se visualizaron mediante gráficos generados con Plotly.
+
+\begin{table}[t]
+\caption{Operaciones evaluadas en el prototipo de preprocesamiento}
+\label{tab:proto}
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{2.7cm} p{4.8cm}}
+\toprule
+\textbf{Operación} & \textbf{Métrica capturada} \\
+\midrule
+Carga completa & Tiempo de carga, \textit{throughput} (filas/s y MB/s) \\
+Filtrado por \texttt{confidence} & Tiempo y número de filas resultantes \\
+Agregación por satélite & Tiempo y \textit{throughput} de la agregación \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Integración con el pipeline y trabajo futuro}
+Este prototipo confirma que la rama tabular del pipeline (Fig.~\ref{fig:pipeline}) es viable y establece la \textit{línea base de rendimiento} de Polars sobre la que se construirán las siguientes entregas. En la Entrega~2 este preprocesamiento se ampliará con implementaciones equivalentes en Dask (paralelismo multinúcleo y distribuido) y cuDF (aceleración por GPU), lo que permitirá la comparación cuantitativa exigida por el análisis de rendimiento —\textit{speedup}, eficiencia y escalabilidad— frente a una ejecución secuencial de referencia. Asimismo, se incorporará la rama de imágenes satelitales del conjunto de Kaggle, aún no abordada en este prototipo.
+
+% ============================== POTENCIALES CLIENTES ==============================
+\section{Potenciales Clientes y Aplicación Comercial}
+\label{sec:clientes}
+
+Aunque este proyecto tiene un fin académico, el sistema propuesto responde a una necesidad real y podría ofrecerse, en un escenario hipotético, como un servicio de detección y análisis de riesgo de incendios forestales a diversas organizaciones. Su valor diferencial radica en la capacidad de procesar grandes volúmenes de datos satelitales de forma escalable y en tiempos reducidos, integrando detección, modelado predictivo y visualización interactiva en un mismo flujo.
+
+Entre los potenciales clientes se identifican:
+
+\begin{itemize}
+\item \textbf{Organismos de gestión de emergencias y servicios forestales.} Cuerpos de bomberos forestales, protección civil y centros de comando de incendios, que se beneficiarían de la detección temprana y el mapeo rápido de focos de calor para optimizar la asignación de recursos y los tiempos de respuesta.
+\item \textbf{Instituciones ambientales y gubernamentales.} Ministerios de ambiente y servicios forestales nacionales (por ejemplo, SINAC/MINAE en Costa Rica o agencias provinciales en Canadá), para el monitoreo de áreas protegidas y la planificación de políticas de prevención.
+\item \textbf{Compañías de seguros.} Aseguradoras que requieren modelar el riesgo de incendio para el diseño de pólizas, la evaluación de siniestros y la prevención de pérdidas.
+\item \textbf{Sector productivo.} Empresas agrícolas y forestales, así como operadoras de servicios públicos con infraestructura en zonas boscosas (por ejemplo, tendido eléctrico), interesadas en proteger sus activos.
+\item \textbf{Comunidades e investigación.} Municipalidades en zonas de interfaz urbano-forestal, que requieren sistemas de alerta temprana, y centros de investigación que estudian patrones de incendios y su relación con el cambio climático.
+\end{itemize}
+
+El modelo de comercialización podría adoptar la forma de un servicio por suscripción (\textit{SaaS}) que exponga el \textit{dashboard} interactivo y las alertas, o de un servicio de análisis a la medida para organizaciones con necesidades específicas de cobertura geográfica o integración con sus sistemas existentes.
+
+% ============================== IX. PLAN DE TRABAJO ==============================
+\section{Plan de Trabajo y Cronograma}
+\label{sec:plan}
+
+El proyecto se estructura en cuatro entregas, con pesos del 20\,\%, 30\,\%, 40\,\% y 10\,\% respectivamente. El cronograma se ajusta al calendario del cuatrimestre en curso, que abarca de la semana~7 (fecha de esta primera entrega) a la semana~15 (cierre del curso). La Tabla~\ref{tab:plan} resume las semanas, fechas aproximadas, objetivos y entregables de cada fase. El trabajo se coordinará a través de un repositorio GitLab que contendrá el código, los \textit{notebooks}, el README, los enlaces a los datos, los resultados y el \textit{dashboard}.
+
+\begin{table}[t]
+\caption{Plan de trabajo y cronograma de las cuatro entregas}
+\label{tab:plan}
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{p{0.55cm} p{0.55cm} p{1.35cm} p{3.8cm}}
+\toprule
+\textbf{Ent.} & \textbf{Peso} & \textbf{Semana / fecha} & \textbf{Objetivos y entregables} \\
+\midrule
+1 & 20\,\% & Sem.~7\newline ($\approx$27 jun) & \textbf{Fundamentos y diseño.} Informe IEEE con introducción, marco teórico, descripción del dataset, justificación de herramientas, objetivos, diseño del pipeline y cronograma. (Documento actual.) \\
+\addlinespace
+2 & 30\,\% & Sem.~8--10\newline ($\approx$18 jul) & \textbf{Implementación inicial y validación parcial.} Adquisición y gestión de datos, preprocesamiento paralelo/distribuido funcional y primeros resultados de análisis exploratorio. Mediciones preliminares de rendimiento. \\
+\addlinespace
+3 & 40\,\% & Sem.~11--14\newline ($\approx$15 ago) & \textbf{Proyecto final completo.} Modelos de ML y aprendizaje profundo entrenados, postprocesamiento, análisis completo de rendimiento (speedup, eficiencia, escalabilidad, throughput, GPU) y dashboard interactivo. Informe técnico final. \\
+\addlinespace
+4 & 10\,\% & Sem.~15\newline ($\approx$22 ago) & \textbf{Presentación.} Exposición de la metodología, los resultados y las conclusiones del proyecto. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Distribución de responsabilidades}
+El equipo, integrado por Allan Arnulfo Montes Monge, Esteban Gutiérrez Saborío, Maria Moroney Sole, Marlon Mora Delgado y Robson Sthiffen Calvo Ortega, distribuirá las tareas de manera equilibrada a lo largo de las etapas del pipeline (gestión de datos, preprocesamiento, análisis, modelado tabular, modelado de imágenes, análisis de rendimiento y visualización), garantizando que todos los integrantes participen tanto en la implementación como en la redacción de los informes.
+
+% ============================== IX. CONCLUSIÓN ==============================
+\section{Conclusión}
+\label{sec:conclusion}
+
+Esta primera entrega ha establecido los fundamentos y el diseño del proyecto de detección de incendios forestales con imágenes satelitales. Se ha justificado la relevancia del problema, se han descrito dos conjuntos de datos reales que en conjunto superan los 8~GB, se ha seleccionado y argumentado una pila de herramientas de cómputo paralelo y acelerado por GPU, y se ha definido un pipeline computacional de seis etapas junto con un plan de trabajo para las cuatro entregas. Este diseño proporciona una base coherente para la fase de implementación, en la que se materializarán el preprocesamiento distribuido, el modelado y, de manera central, la evaluación rigurosa del rendimiento del sistema.
+
+% ============================== BIBLIOGRAFÍA ==============================
+\begin{thebibliography}{00}
+
+\bibitem{giglio2016}
+L. Giglio, W. Schroeder, y C. O. Justice, ``The collection 6 MODIS active fire detection algorithm and fire products,'' \textit{Remote Sensing of Environment}, vol. 178, pp. 31--41, 2016.
+
+\bibitem{schroeder2014}
+W. Schroeder, P. Oliva, L. Giglio, y I. A. Csiszar, ``The New VIIRS 375 m active fire detection data product: Algorithm description and initial assessment,'' \textit{Remote Sensing of Environment}, vol. 143, pp. 85--96, 2014.
+
+\bibitem{nasafirms}
+NASA, ``Fire Information for Resource Management System (FIRMS),'' NASA Earthdata. [En línea]. Disponible: \url{https://firms.modaps.eosdis.nasa.gov/}
+
+\bibitem{kaggle}
+A. Aaba, ``Wildfire Prediction Dataset (Satellite Images),'' Kaggle, 2022. [En línea]. Disponible: \url{https://www.kaggle.com/datasets/abdelghaniaaba/wildfire-prediction-dataset}
+
+\bibitem{jain2020}
+P. Jain, S. C. P. Coogan, S. G. Subramanian, M. Crowley, S. Taylor, y M. D. Flannigan, ``A review of machine learning applications in wildfire science and management,'' \textit{Environmental Reviews}, vol. 28, no. 4, pp. 478--505, 2020.
+
+\bibitem{he2016}
+K. He, X. Zhang, S. Ren, y J. Sun, ``Deep residual learning for image recognition,'' en \textit{Proc. IEEE Conf. Computer Vision and Pattern Recognition (CVPR)}, 2016, pp. 770--778.
+
+\bibitem{ronneberger2015}
+O. Ronneberger, P. Fischer, y T. Brox, ``U-Net: Convolutional networks for biomedical image segmentation,'' en \textit{Proc. Int. Conf. Medical Image Computing and Computer-Assisted Intervention (MICCAI)}, 2015, pp. 234--241.
+
+\bibitem{rocklin2015}
+M. Rocklin, ``Dask: Parallel computation with blocked algorithms and task scheduling,'' en \textit{Proc. 14th Python in Science Conf. (SciPy)}, 2015, pp. 130--136.
+
+\bibitem{rapids}
+RAPIDS Development Team, ``RAPIDS: Collection of libraries for end-to-end GPU data science,'' NVIDIA, 2023. [En línea]. Disponible: \url{https://rapids.ai/}
+
+\bibitem{polars}
+R. Vink y col., ``Polars: Lightning-fast DataFrame library for Rust and Python,'' 2023. [En línea]. Disponible: \url{https://pola.rs/}
+
+\bibitem{paszke2019}
+A. Paszke y col., ``PyTorch: An imperative style, high-performance deep learning library,'' en \textit{Advances in Neural Information Processing Systems (NeurIPS)}, vol. 32, 2019, pp. 8024--8035.
+
+\bibitem{plotly}
+Plotly Technologies Inc., ``Dash: A Python framework for building analytical web applications,'' 2023. [En línea]. Disponible: \url{https://dash.plotly.com/}
+
+\bibitem{amdahl1967}
+G. M. Amdahl, ``Validity of the single processor approach to achieving large scale computing capabilities,'' en \textit{Proc. AFIPS Spring Joint Computer Conf.}, 1967, pp. 483--485.
+
+\bibitem{gustafson1988}
+J. L. Gustafson, ``Reevaluating Amdahl's law,'' \textit{Communications of the ACM}, vol. 31, no. 5, pp. 532--533, 1988.
+
+\end{thebibliography}
+
+\end{document}

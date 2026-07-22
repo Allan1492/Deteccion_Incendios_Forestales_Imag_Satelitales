@@ -1,0 +1,356 @@
+%=========================================================================
+%  ENTREGA 2 -- IMPLEMENTACION INICIAL Y VALIDACION PARCIAL
+%  Curso: Computación Paralela y Distribuida (TTCT0017) -- LEAD University
+%  Profesor: Johansell Villalobos Cubillo
+%  Tema: Detección de Incendios Forestales con Imágenes Satelitales
+%
+%  INSTRUCCIONES DE USO EN OVERLEAF
+%  1. Proyecto nuevo en blanco -> pegar como "main.tex".
+%  2. Compilador: pdfLaTeX. Bibliografía embebida (no requiere .bib).
+%  3. Sustituir los marcadores <<< ... >>> con las cifras reales del
+%     benchmark una vez que termine el job de SLURM.
+%  4. Insertar las figuras PNG generadas por analizar_resultados.py.
+%=========================================================================
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{listings}
+
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+\addto\captionsspanish{\renewcommand{\figurename}{Fig.}}
+\addto\captionsspanish{\renewcommand{\tablename}{TABLA}}
+
+% Marcador visual para las cifras pendientes de completar
+\newcommand{\pendiente}[1]{\textcolor{red}{\textbf{[#1]}}}
+
+\lstdefinestyle{sh}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true, frame=single, framesep=4pt,
+  showstringspaces=false, columns=fullflexible
+}
+
+\begin{document}
+
+\title{Detección de Incendios Forestales con Imágenes Satelitales:\\
+Implementación Inicial y Evaluación Preliminar de Rendimiento\\
+\large{Entrega 2: Implementación Inicial y Validación Parcial}}
+
+\author{
+\IEEEauthorblockN{Allan Arnulfo Montes Monge, Esteban Gutiérrez Saborío, Maria Moroney Sole,\\ Marlon Mora Delgado y Robson Sthiffen Calvo Ortega}
+\IEEEauthorblockA{\textit{Curso TTCT0017 -- Computación Paralela y Distribuida}\\
+\textit{LEAD University}\\
+Profesor: Johansell Villalobos Cubillo\\
+San José, Costa Rica}
+}
+
+\maketitle
+
+\begin{abstract}
+Este documento presenta la implementación inicial y la validación parcial del proyecto de detección de incendios forestales a partir de datos satelitales. Se reporta la adquisición y consolidación de un conjunto real de NASA FIRMS con 52\,508\,485 registros (1.24~GB en formato Parquet), su preprocesamiento mediante motores de cómputo paralelo, un análisis exploratorio espacio-temporal y, de forma central, la primera evaluación cuantitativa del rendimiento del pipeline. La evaluación compara una línea base estrictamente secuencial contra implementaciones paralelas de memoria compartida y distribuidas, ejecutadas sobre el clúster de alto rendimiento Kabré del Centro Nacional de Alta Tecnología. Se reportan speedup, eficiencia, escalabilidad fuerte y débil, throughput y uso de memoria. Los resultados muestran un speedup global de hasta $45\times$ frente a la línea base secuencial, con un punto de saturación del paralelismo en torno a los 16 hilos —coherente con la ley de Amdahl— y un límite de memoria en el modelo de procesos distribuidos que provoca la terminación de los \textit{workers} a partir de cierto grado de paralelismo.
+\end{abstract}
+
+\begin{IEEEkeywords}
+incendios forestales, teledetección, cómputo paralelo, HPC, speedup, escalabilidad, Polars, Dask, SLURM.
+\end{IEEEkeywords}
+
+% ============================== I ==============================
+\section{Introducción}
+
+La Entrega~1 estableció los fundamentos y el diseño del proyecto: la detección de incendios forestales a partir de datos satelitales masivos, con el objetivo específico de \textit{reducir la tasa de falsas alarmas} combinando variables físicas y contextuales de cada detección. El presente documento reporta la materialización de las tres primeras etapas del pipeline —adquisición de datos, preprocesamiento paralelo y análisis exploratorio— junto con la primera evaluación cuantitativa del rendimiento computacional, que constituye el eje central del curso.
+
+El aporte principal de esta entrega es metodológico: se establece un protocolo de medición que permite atribuir correctamente las ganancias de rendimiento al paralelismo, distinguiéndolas de las ganancias derivadas del cambio de tecnología. Esta distinción, que se detalla en la Sección~\ref{sec:metodologia}, resulta indispensable para reportar métricas de eficiencia coherentes.
+
+% ============================== II ==============================
+\section{Adquisición y Gestión de Datos}
+\label{sec:datos}
+
+\subsection{Conjunto de datos}
+Se consolidó un conjunto real de puntos de calor procedente del sistema FIRMS de la NASA, con las características de la Tabla~\ref{tab:dataset}. El volumen supera con holgura el mínimo de 1~GB exigido por el curso.
+
+\begin{table}[t]
+\caption{Características del conjunto de datos consolidado}
+\label{tab:dataset}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{p{2.6cm} p{4.9cm}}
+\toprule
+\textbf{Atributo} & \textbf{Valor} \\
+\midrule
+Fuente & NASA FIRMS \\
+Sensor & VIIRS (Suomi-NPP, NOAA-20, NOAA-21) \\
+Periodo & 30 jun 2025 -- 30 jun 2026 \\
+Registros & 52\,508\,485 \\
+Columnas & 14 \\
+Formato & Apache Parquet (Snappy) \\
+Tamaño & 1.24~GB (1\,332\,485\,896 bytes) \\
+Grupos de filas & 51 \\
+Valores nulos & 0 en todas las columnas \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Nota sobre la nomenclatura de las bandas}
+Las columnas \texttt{brightness} y \texttt{bright\_t31} conservan los nombres del producto MODIS, pero los datos provienen de VIIRS. Corresponden, respectivamente, a las bandas \texttt{bright\_ti4} (canal I-4, 3.74~$\mu$m, sensible al fuego) y \texttt{bright\_ti5} (canal I-5, 11.45~$\mu$m, temperatura de fondo). Esta equivalencia es funcionalmente válida para el propósito del proyecto, ya que el contraste térmico
+\begin{equation}
+\Delta T = \texttt{brightness} - \texttt{bright\_t31}
+\label{eq:deltat}
+\end{equation}
+mantiene el mismo significado físico —diferencia entre el canal del fuego y el del entorno— que en el producto MODIS. Se deja constancia explícita de esta correspondencia para evitar ambigüedades en la interpretación de los resultados.
+
+\subsection{Verificación de integridad}
+Durante el desarrollo se detectó que una copia previa del archivo estaba truncada, lo que provocó que el análisis exploratorio se ejecutara sobre datos sintéticos de respaldo sin advertencia explícita. Para evitar la repetición de este problema se incorporó al pipeline una rutina de verificación (\texttt{verificar\_parquet.py}) que comprueba los bytes mágicos \texttt{PAR1} al inicio y al final del archivo, valida los metadatos, realiza una lectura de prueba y confirma la presencia de las columnas requeridas. Esta verificación se ejecuta automáticamente antes de cada trabajo de cómputo.
+
+% ============================== III ==============================
+\section{Infraestructura de Cómputo}
+\label{sec:infra}
+
+Los experimentos se ejecutaron en el clúster \textbf{Kabré} del Centro Nacional de Alta Tecnología (CeNAT), que dispone de 2048 núcleos de cómputo, 120~TB de almacenamiento y nodos con aceleradores gráficos. La Tabla~\ref{tab:kabre} resume la partición utilizada.
+
+\begin{table}[t]
+\caption{Configuración de ejecución en el clúster Kabré}
+\label{tab:kabre}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{p{2.6cm} p{4.9cm}}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} \\
+\midrule
+Clúster & Kabré (CeNAT) \\
+Partición & \texttt{kura} \\
+Nodos disponibles & 11 \\
+Núcleos por nodo & 40 \\
+Memoria por nodo & 257 GB \\
+Gestor de recursos & SLURM \\
+Nodo de ejecución & \texttt{kura-2b.cnca} \\
+Entorno & Miniforge, Python 3.11 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El envío de trabajos se realiza mediante \texttt{sbatch}, reservando un nodo completo para garantizar que las mediciones no se vean afectadas por la carga de otros usuarios. Las variables \texttt{OMP\_NUM\_THREADS}, \texttt{OPENBLAS\_NUM\_THREADS} y \texttt{MKL\_NUM\-\_THREADS} se fijan en 1 para impedir que las bibliotecas de álgebra lineal generen hilos adicionales que contaminen la medición del paralelismo.
+
+% ============================== IV ==============================
+\section{Metodología de Evaluación de Rendimiento}
+\label{sec:metodologia}
+
+\subsection{Diseño experimental}
+Se evaluaron cuatro configuraciones de procesamiento, descritas en la Tabla~\ref{tab:backends}. La línea base es \textbf{pandas restringido a un solo hilo}. Esta elección es deliberada: el motor \textit{in-memory} de Polars es también multihilo, por lo que compararlo contra su motor \textit{streaming} no constituye una comparación entre ejecución secuencial y paralela, sino entre dos estrategias de ejecución igualmente paralelas.
+
+\begin{table}[t]
+\caption{Configuraciones evaluadas}
+\label{tab:backends}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{p{1.5cm} p{2.3cm} p{3.4cm}}
+\toprule
+\textbf{Motor} & \textbf{Rol} & \textbf{Paralelismo} \\
+\midrule
+pandas & Línea base $T_1$ & Un hilo (BLAS restringido) \\
+Polars & Memoria compartida & \texttt{POLARS\_MAX\_THREADS} \\
+Dask & Distribuido & Número de \textit{workers} \\
+cuDF & GPU (Etapa 4) & Miles de hilos CUDA \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Operaciones medidas}
+Se seleccionaron cuatro operaciones representativas del preprocesamiento real del proyecto, no cargas sintéticas: \textbf{carga} (lectura y materialización del Parquet), \textbf{filtro} (descarte de detecciones de baja confianza), \textbf{agregación} (conteo y FRP medio por satélite y mes) y \textbf{características} (cálculo de $\Delta T$ según la Ec.~\ref{eq:deltat} y derivación de mes y hora). La última operación construye precisamente la variable central del problema de falsas alarmas, de modo que el benchmark mide el pipeline que efectivamente se utilizará.
+
+\subsection{Aislamiento del número de hilos}
+El número de hilos de Polars se controla mediante la variable de entorno \texttt{POLARS\_MAX\_THREADS}, que solo surte efecto antes de importar la biblioteca. Por ello cada configuración se ejecuta en un \textbf{proceso independiente}, invocado por un script controlador. Medir distintos niveles de paralelismo dentro de un mismo proceso —o de un mismo \textit{notebook}— produciría resultados inválidos.
+
+\subsection{Métricas}
+Se calculan dos medidas de aceleración con significados distintos:
+\begin{align}
+S_{\text{global}}(p) &= \frac{T_{\text{pandas}}}{T_p} \label{eq:spg}\\[2pt]
+S_{\text{paralelo}}(p) &= \frac{T_{\text{motor}}(1)}{T_{\text{motor}}(p)} \label{eq:spp}
+\end{align}
+La Ec.~\ref{eq:spg} cuantifica la ganancia total de cambiar de tecnología \textit{y} paralelizar. La Ec.~\ref{eq:spp} compara cada motor consigo mismo y aísla el efecto del paralelismo. La eficiencia se calcula exclusivamente a partir de la segunda:
+\begin{equation}
+E(p) = \frac{S_{\text{paralelo}}(p)}{p}.
+\label{eq:ef}
+\end{equation}
+
+Emplear $S_{\text{global}}$ en la Ec.~\ref{eq:ef} produciría eficiencias superiores al 100\,\%, atribuyendo al paralelismo una ganancia que en realidad proviene del motor de ejecución. Se reportan además el \textit{throughput} (filas/s y MB/s) y la memoria pico residente.
+
+\subsection{Experimentos de escalabilidad}
+La \textbf{escalabilidad fuerte} mantiene fijo el tamaño del problema (52.5 millones de registros) e incrementa $p \in \{1,2,4,8,16,32,40\}$. La \textbf{escalabilidad débil} incrementa el tamaño del problema proporcionalmente a $p$, de modo que la carga por hilo permanece constante; en el caso ideal el tiempo se mantendría invariante. Cada configuración se repite tres veces y se reporta la \textbf{mediana}, más robusta que la media frente a la primera lectura sin caché del sistema de archivos.
+
+% ============================== V ==============================
+\section{Resultados Preliminares}
+\label{sec:resultados}
+
+\subsection{Tiempos y aceleración}
+La Tabla~\ref{tab:resultados} resume los resultados para la operación de \textbf{agregación} (conteo y FRP medio por satélite y mes), que fue la de mayor aceleración. Se reportan el tiempo mediano, ambos speedups y la eficiencia. La descomposición es reveladora: sobre 52.5 millones de registros, el simple cambio de pandas a Polars secuencial ya aporta un factor de $4.97\times$; el paralelismo de Polars añade sobre ese punto un factor adicional de $9.14\times$; y el efecto combinado alcanza un speedup global de $45.46\times$ con 16 hilos.
+
+\begin{table}[t]
+\caption{Resultados para la operación de agregación (mediana de tres repeticiones, 52.5 M registros)}
+\label{tab:resultados}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{l r r r r r}
+\toprule
+\textbf{Motor} & \textbf{$p$} & \textbf{$T$ (s)} & \textbf{$S_{\text{glob}}$} & \textbf{$S_{\text{par}}$} & \textbf{$E$ (\%)} \\
+\midrule
+pandas & 1  & 11.60 & 1.00  & ---  & --- \\
+Polars & 1  & 2.33  & 4.97  & 1.00 & 100.0 \\
+Polars & 4  & 0.613 & 18.92 & 3.80 & 95.1 \\
+Polars & 8  & 0.354 & 32.77 & 6.59 & 82.4 \\
+Polars & 16 & 0.255 & 45.46 & 9.14 & 57.1 \\
+Polars & 32 & 0.275 & 42.20 & 8.48 & 26.5 \\
+Polars & 40 & 0.285 & 40.68 & 8.18 & 20.5 \\
+Dask   & 1  & 61.80 & 0.19  & 1.00 & 100.0 \\
+Dask   & 2  & 34.08 & 0.34  & 1.81 & 90.7 \\
+Dask   & 4  & 33.92 & 0.34  & 1.82 & 45.5 \\
+Dask   & $\geq 8$ & \multicolumn{4}{c}{fallo por memoria (\textit{workers} terminados)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figuras/speedup_agregacion.png}
+\caption{Escalabilidad fuerte (speedup paralelo) para la operación de agregación. La recta discontinua representa la aceleración lineal ideal; la curva de Polars se aparta de ella y satura en torno a los 16 hilos.}
+\label{fig:speedup}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figuras/eficiencia.png}
+\caption{Eficiencia paralela en función del número de hilos. La caída sostenida al aumentar $p$ refleja el efecto descrito por la ley de Amdahl.}
+\label{fig:eficiencia}
+\end{figure}
+
+\subsection{Punto de saturación y ley de Amdahl}
+El resultado más relevante es que Polars deja de acelerar más allá de los \textbf{16 hilos}. En la agregación, el tiempo baja de 2.33~s (1 hilo) a 0.255~s (16 hilos), pero con 32 y 40 hilos vuelve a subir levemente (0.275~s y 0.285~s). En consecuencia, la eficiencia cae de forma sostenida: 95.1\,\% con 4 hilos, 57.1\,\% con 16 y apenas 20.5\,\% con 40. Este comportamiento es consistente con la ley de Amdahl~\cite{amdahl1967}: la fracción no paralelizable de la tarea —lectura del Parquet desde disco, descompresión y coordinación entre hilos— impone un techo a la aceleración, y a partir de cierto punto añadir hilos solo incrementa la contención por el ancho de banda de memoria sin reducir el tiempo. Las cuatro operaciones exhiben el mismo patrón, con el punto de saturación situado entre 8 y 16 hilos.
+
+\subsection{Comparación entre motores}
+La comparación Polars--Dask es ilustrativa de dos filosofías de paralelismo. Polars (hilos sobre memoria compartida) es consistentemente el más rápido en este escenario de un solo nodo. Dask (procesos distribuidos) parte de una desventaja notable —su agregación con un \textit{worker} tarda 61.8~s frente a 2.33~s de Polars— debido a la sobrecarga de serialización y coordinación entre procesos; aunque escala casi linealmente al pasar a 2 \textit{workers} (34.1~s), no alcanza a Polars. Este resultado no descalifica a Dask: su modelo está diseñado para conjuntos que exceden la memoria de una máquina o para ejecución multinodo, escenario que se explorará en la Entrega~3.
+
+\subsection{Límite de memoria en el paralelismo por procesos}
+Un hallazgo adicional, y didácticamente valioso, es que las operaciones de \textit{agregación} y \textit{filtrado} con Dask \textbf{fallaron} al emplear 8 o más \textit{workers}, con el error \textit{``all those workers died while running it''}. La causa es la saturación de memoria: en el modelo de Dask cada \textit{worker} es un proceso independiente que mantiene su propia porción de datos, de modo que el consumo total crece con el número de \textit{workers} hasta agotar la memoria del nodo, momento en el que el planificador termina los procesos. Esto evidencia una limitación intrínseca del paralelismo por réplica de memoria, ausente en el modelo de hilos de Polars, que comparte un único espacio de direcciones. La operación de \textit{características}, más ligera, sí completó en todas las configuraciones.
+
+\subsection{Escalabilidad débil}
+En el experimento de escalabilidad débil, donde el volumen crece en proporción al número de hilos, el \textit{throughput} de Polars se mantiene elevado y relativamente estable (por ejemplo, en la operación de características pasa de 21.6 a 133.8 millones de filas/s al escalar de 1 a 40 hilos), lo que indica que el sistema absorbe cargas mayores sin degradación proporcional del tiempo mientras la memoria lo permita.
+
+% ============================== VI ==============================
+\section{Análisis Exploratorio}
+\label{sec:eda}
+
+El análisis exploratorio se ejecutó sobre los 52.5 millones de focos de calor reales, empleando el mismo motor \textit{streaming} de Polars para procesar el conjunto sin materializarlo por completo en memoria.
+
+\subsection{Distribución temporal y espacial}
+La serie temporal diaria (Fig.~\ref{fig:serie}) revela una marcada estacionalidad: la actividad alcanza su máximo a finales de agosto de 2025 (hasta 399\,153 detecciones en un solo día, el 30 de agosto) y su mínimo durante el invierno boreal, coherente con la temporada de incendios del hemisferio norte. Espacialmente, las mayores densidades se concentran en el centro de Canadá (celda 56\textdegree N, 100\textdegree O), Siberia y el África subsahariana. Los tres satélites VIIRS (NOAA-20, Suomi-NPP y NOAA-21) aportan volúmenes casi idénticos (en torno a 17 millones de detecciones cada uno), lo que indica una cobertura temporal homogénea.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figuras_eda/01_serie_diaria.png}
+\caption{Serie temporal diaria de detecciones. El pico de finales de agosto corresponde a la temporada de incendios boreal.}
+\label{fig:serie}
+\end{figure}
+
+\subsection{Variable objetivo}
+Un hallazgo con implicaciones directas para el modelado es la distribución de la variable objetivo. La Tabla~\ref{tab:confianza} muestra que las detecciones de baja confianza —que en la formulación del problema operan como \textit{proxy} de falsa alarma— representan el 12.15\,\% del total.
+
+\begin{table}[t]
+\caption{Distribución del nivel de confianza de las detecciones}
+\label{tab:confianza}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{l l r r}
+\toprule
+\textbf{Valor} & \textbf{Nivel} & \textbf{Registros} & \textbf{\%} \\
+\midrule
+\texttt{n} & Nominal & 43\,214\,217 & 82.30 \\
+\texttt{l} & Bajo & 6\,382\,160 & 12.15 \\
+\texttt{h} & Alto & 2\,912\,108 & 5.55 \\
+\midrule
+\multicolumn{2}{l}{\textbf{Total}} & 52\,508\,485 & 100.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Esta distribución implica un desbalance aproximado de 7:1 entre clases. En consecuencia, la exactitud (\textit{accuracy}) no es una métrica adecuada: un clasificador que asignara la clase mayoritaria a todos los registros alcanzaría un 87.85\,\% sin capacidad discriminativa alguna. La evaluación del modelo se basará por tanto en precisión, exhaustividad (\textit{recall}) y matriz de confusión, tal como se estableció en la Entrega~1.
+
+\subsection{Validación empírica de la hipótesis}
+El análisis aporta evidencia directa a favor de la hipótesis planteada en la Entrega~1, según la cual el contraste térmico $\Delta T = \texttt{brightness} - \texttt{bright\_t31}$ discrimina las detecciones confiables de las probables falsas alarmas. La Tabla~\ref{tab:deltat} muestra el $\Delta T$ medio y la potencia radiativa media por nivel de confianza: las detecciones de alta confianza presentan un contraste térmico de 60.8~K, más del doble que las de baja confianza (28.1~K). Es decir, los focos con menor diferencia de temperatura respecto a su entorno —los que apenas destacan del fondo— tienden a clasificarse con baja confianza, exactamente el comportamiento que se anticipó. Este resultado confirma que las variables físicas contienen señal discriminativa suficiente para el modelo de la Etapa~4.
+
+\begin{table}[t]
+\caption{Contraste térmico y potencia radiativa medios por nivel de confianza}
+\label{tab:deltat}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Confianza} & \textbf{$\Delta T$ medio (K)} & \textbf{FRP medio (MW)} & \textbf{Registros} \\
+\midrule
+Alta (\texttt{h})    & 60.81 & 28.21 & 2\,912\,108 \\
+Nominal (\texttt{n}) & 34.78 &  8.41 & 43\,214\,217 \\
+Baja (\texttt{l})    & 28.11 & 12.79 & 6\,382\,160 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================== VII ==============================
+\section{Limitaciones y Trabajo Pendiente}
+
+\subsection{Limitaciones de esta entrega}
+\begin{itemize}
+\item Las mediciones corresponden a un único nodo (paralelismo de memoria compartida). La evaluación multinodo con Dask distribuido queda pendiente.
+\item La rama de imágenes satelitales del conjunto de Kaggle aún no ha sido incorporada al pipeline.
+\item No se ha ejecutado la evaluación con aceleración por GPU, prevista para la Etapa 4 en las particiones \texttt{nukwa-l40s} del clúster.
+\end{itemize}
+
+\subsection{Trabajo pendiente}
+Para la Entrega~3 se contempla: el entrenamiento del clasificador tabular con RAPIDS cuML sobre la variable objetivo definida; la implementación de la red neuronal convolucional en PyTorch sobre el conjunto de imágenes; la evaluación de rendimiento con GPU y en configuración multinodo; y la construcción del \textit{dashboard} interactivo con Plotly y Dash.
+
+% ============================== VIII ==============================
+\section{Conclusión}
+
+Esta entrega consolidó un conjunto de datos real de 52.5 millones de registros verificado en su integridad, estableció un entorno reproducible de cómputo en el clúster Kabré y definió un protocolo de medición de rendimiento metodológicamente riguroso, que distingue la ganancia atribuible al paralelismo de la derivada del motor de ejecución. Los resultados confirman aceleraciones globales de hasta $45\times$, identifican el punto de saturación del paralelismo de memoria compartida en torno a los 16 hilos —de acuerdo con la ley de Amdahl— y evidencian el límite de memoria del paralelismo por procesos. Estos hallazgos validan el diseño propuesto en la Entrega~1 y establecen la línea base sobre la que se evaluarán, en la Entrega~3, las etapas de modelado, la aceleración por GPU y la ejecución multinodo.
+
+\begin{thebibliography}{00}
+
+\bibitem{schroeder2014}
+W. Schroeder, P. Oliva, L. Giglio, y I. A. Csiszar, ``The New VIIRS 375 m active fire detection data product: Algorithm description and initial assessment,'' \textit{Remote Sensing of Environment}, vol. 143, pp. 85--96, 2014.
+
+\bibitem{giglio2016}
+L. Giglio, W. Schroeder, y C. O. Justice, ``The collection 6 MODIS active fire detection algorithm and fire products,'' \textit{Remote Sensing of Environment}, vol. 178, pp. 31--41, 2016.
+
+\bibitem{nasafirms}
+NASA, ``Fire Information for Resource Management System (FIRMS).'' [En línea]. Disponible: \url{https://firms.modaps.eosdis.nasa.gov/}
+
+\bibitem{rocklin2015}
+M. Rocklin, ``Dask: Parallel computation with blocked algorithms and task scheduling,'' en \textit{Proc. 14th Python in Science Conf. (SciPy)}, 2015, pp. 130--136.
+
+\bibitem{polars}
+R. Vink y col., ``Polars: Lightning-fast DataFrame library for Rust and Python.'' [En línea]. Disponible: \url{https://pola.rs/}
+
+\bibitem{amdahl1967}
+G. M. Amdahl, ``Validity of the single processor approach to achieving large scale computing capabilities,'' en \textit{Proc. AFIPS Spring Joint Computer Conf.}, 1967, pp. 483--485.
+
+\bibitem{gustafson1988}
+J. L. Gustafson, ``Reevaluating Amdahl's law,'' \textit{Communications of the ACM}, vol. 31, no. 5, pp. 532--533, 1988.
+
+\bibitem{kabre}
+Colaboratorio Nacional de Computación Avanzada, ``Kabré: infraestructura de supercomputación del CeNAT.'' [En línea]. Disponible: \url{https://kabre.cenat.ac.cr/}
+
+\bibitem{slurm}
+A. B. Yoo, M. A. Jette, y M. Grondona, ``SLURM: Simple Linux Utility for Resource Management,'' en \textit{Job Scheduling Strategies for Parallel Processing}, 2003, pp. 44--60.
+
+\end{thebibliography}
+
+\end{document}
