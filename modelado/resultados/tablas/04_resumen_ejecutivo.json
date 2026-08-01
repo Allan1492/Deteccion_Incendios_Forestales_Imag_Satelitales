@@ -1,0 +1,21 @@
+{
+  "n_registros": 52508479,
+  "n_predictoras": 11,
+  "balance_clases": [
+    {
+      "es_falsa_alarma": 0,
+      "n": 46126325,
+      "pct": 87.8454792034635
+    },
+    {
+      "es_falsa_alarma": 1,
+      "n": 6382154,
+      "pct": 12.154520796536499
+    }
+  ],
+  "mejor_modelo_por_f1": "Red Neuronal",
+  "f1_mejor_modelo": 0.8163168566392313,
+  "roc_auc_mejor_modelo": 0.9823604836893435,
+  "modelo_mas_rapido_entrenar": "XGBoost",
+  "tiempo_mas_rapido_s": 42.87142811600643
+}

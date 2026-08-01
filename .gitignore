@@ -10,6 +10,7 @@ __pycache__/
 
 # Datos (evita subir archivos grandes al repo)
 data/*.parquet
+modelado/datos/*.parquet
 data/*.csv
 
 # Variables de entorno
@@ -17,3 +18,7 @@ data/*.csv
 
 # Configuración de VS Code (opcional)
 .vscode/
+
+# Modelado: datos y modelos entrenados (pesan demasiado / son por usuario)
+modelado/datos/
+modelado/modelos/
