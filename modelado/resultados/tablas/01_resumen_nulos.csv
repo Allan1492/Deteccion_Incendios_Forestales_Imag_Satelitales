@@ -1,0 +1,13 @@
+columna,tipo,nulos,pct_nulos
+delta_t,Float64,0,0.0
+brightness,Float64,0,0.0
+bright_t31,Float64,0,0.0
+frp,Float64,0,0.0
+scan,Float64,0,0.0
+track,Float64,0,0.0
+mes,Int8,0,0.0
+hora,Int64,0,0.0
+es_noche,Int8,0,0.0
+latitude,Float64,0,0.0
+longitude,Float64,0,0.0
+es_falsa_alarma,Int8,0,0.0

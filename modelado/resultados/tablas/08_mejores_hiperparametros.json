@@ -1,0 +1,5 @@
+{
+  "Random Forest": "{'n_estimators': 100, 'max_depth': 16}",
+  "XGBoost": "{'max_depth': 4, 'eta': 0.3}",
+  "Red Neuronal": "{'batch_size': 2048, 'lr': 0.001}"
+}
