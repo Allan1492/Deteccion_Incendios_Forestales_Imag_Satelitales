@@ -32,7 +32,7 @@ Qué hace este script:
 > Este archivo pesa varios GB — **no se sube a GitHub**. Se comparte directamente entre
 > el equipo (Drive, SCP, etc.) o se regenera con el comando de arriba.
 
-### 0.1 En Kabré: guardar el Parquet en `/data`, NUNCA en `/home`
+### 1. En Kabré: guardar el Parquet en `/data`, NUNCA en `/home`
 
 `/home` tiene una cuota de solo **10GB por usuario** — un Parquet de varios GB la llena de
 inmediato (ya nos pasó, y frenó todo el trabajo hasta resolverlo). `/data` en cambio tiene
@@ -76,6 +76,7 @@ modelado/
 │   ├── exploracion_dataset.ipynb   <- EDA + genera train/val/test.parquet
 │   ├── benchmark_cpu_vs_gpu.ipynb  <- benchmark CPU vs GPU 
 │   └── ajuste_hiperparametros.ipynb <- busqueda de hiperparametros 
+│   └── cnn_imagenes_wildfire.ipynb <- Clasificación imágenes satelitales 
 └── resultados/
     ├── tablas/       <- CSV/JSON con métricas
     └── figuras/      <- PNG a 150dpi para el informe IEEE
@@ -86,17 +87,18 @@ modelado/
 ## 2. Orden para correr los notebooks
 
 ```
-01_exploracion_dataset.ipynb   (genera los splits)
+exploracion_dataset.ipynb   (genera los splits)
         |
         v
-07_ajuste_hiperparametros.ipynb   (opcional, pero recomendado, busca la mejor config)
+ajuste_hiperparametros.ipynb   (opcional, pero recomendado, busca la mejor config)
         |
         v
-00_pipeline_modelado.ipynb   (entrenamiento final + evaluacion + figuras)
+pipeline_modelado.ipynb   (entrenamiento final + evaluacion + figuras)
         |
         v
-06_benchmark_cpu_vs_gpu.ipynb   (para el analisis de rendimiento)
-```
+benchmark_cpu_vs_gpu.ipynb   (para el analisis de rendimiento de Robson)
+
+cnn_imagenes_wildfire.ipynb   (independiente -- solo requiere el dataset de imagenes, seccion 5.1)
 
 ### 2.1 `01_exploracion_dataset.ipynb`
 
@@ -188,8 +190,55 @@ de uso de GPU vs. Random Forest ~59%) — no toda aceleración por GPU es igual 
 
 ---
 
-## 5. Pendiente
+## 5. CNN de imágenes (transfer learning)  `cnn_imagenes_wildfire.ipynb`
 
-CNN de imágenes (Kaggle Wildfire Prediction Dataset) — contemplada en el cronograma
-original, pendiente de implementar con transfer learning (ResNet18) para mantener el
-costo computacional razonable.
+Clasifica imágenes satelitales (`wildfire` / `nowildfire`) usando **transfer learning**
+sobre ResNet18 preentrenada en ImageNet — se congelan las capas convolucionales y solo se
+entrena una nueva capa clasificadora (0.3% de los parámetros totales), lo que reduce
+drásticamente el tiempo de entrenamiento comparado con una CNN desde cero.
+
+**Requiere el dataset de imágenes descargado en:**
+```
+DATOS_BASE_DIR/data/wildfire_images/{train,valid,test}/{wildfire,nowildfire}/*.jpg
+```
+Ver sección 5.1 para las instrucciones de descarga.
+
+**Salidas:** `modelos/cnn_wildfire.pt`, `resultados/tablas/metricas_cnn.json`,
+`resultados/figuras/cnn_curvas_entrenamiento.png`, `cnn_matriz_confusion.png`.
+
+**Notas de rendimiento:** con pocas imágenes de entrenamiento (o `batch_size` chico), la
+GPU se usa muy poco (<10%) porque el cuello de botella es la carga/transformación de
+imágenes desde disco (I/O, en CPU), no el cómputo del modelo. Subir `batch_size` (256 en
+vez de 64) y `NUM_WORKERS` al máximo de cores disponibles, más `persistent_workers=True`
+en los `DataLoader`, mejoró el tiempo de 302.6s a 92.1s (3.3×) con la misma calidad — buen
+ejemplo de que el cuello de botella no siempre es el modelo, sino cómo se le alimentan
+los datos.
+
+## 5.1 Instrucciones de Descarga (CNN de imágenes)
+
+Dataset de imágenes (para la CNN, notebook `cnn_imagenes_wildfire.ipynb`)
+
+El *Kaggle Wildfire Prediction Dataset* (~6.5GB) también debe vivir en `/data`, no en
+`/home`. Descarga manual (sin necesidad de API token de Kaggle):
+
+1. Descarga el ZIP desde [kaggle.com/datasets/abdelghaniaaba/wildfire-prediction-dataset](https://www.kaggle.com/datasets/abdelghaniaaba/wildfire-prediction-dataset) (botón *Download*, requiere cuenta de Kaggle).
+2. Crea la carpeta destino en Kabré (por SSH):
+   ```bash
+   mkdir -p /data/$USER/deteccion_incendios/data/wildfire_images
+   ```
+3. Sube el ZIP desde tu computadora (no desde Kabré):
+   ```bash
+   scp -P 22022 "ruta/al/archivo.zip" \
+       ulead-28@kabre.cenat.ac.cr:/data/ulead-28/deteccion_incendios/data/wildfire_images/
+   ```
+4. Descomprime y limpia (de vuelta en Kabré):
+   ```bash
+   cd /data/$USER/deteccion_incendios/data/wildfire_images
+   unzip "archivo.zip" && rm "archivo.zip"
+   ```
+
+Estructura esperada después de descomprimir: `{train,valid,test}/{wildfire,nowildfire}/*.jpg`.
+
+> **Imágenes truncadas:** el dataset de Kaggle trae algunas imágenes corruptas/incompletas
+> que rompen la carga (`OSError: image file is truncated`). El notebook `cnn_imagenes_wildfire.ipynb` ya incluye
+> `ImageFile.LOAD_TRUNCATED_IMAGES = True` para tolerarlas automáticamente.
