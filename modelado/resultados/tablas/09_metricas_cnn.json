@@ -1,0 +1,21 @@
+{
+  "modelo": "CNN (ResNet18 transfer learning)",
+  "backend": "pytorch/cuda",
+  "accuracy": 0.9606349206349206,
+  "precision": 0.9730679156908665,
+  "recall": 0.9551724137931035,
+  "f1": 0.9640371229698376,
+  "roc_auc": 0.9918786174288741,
+  "tiempo_entrenamiento_s": 92.10621348500717,
+  "tiempo_inferencia_s": 2.899175468017347,
+  "epocas": 10,
+  "n_train": 30250,
+  "n_test": 6300,
+  "clases": [
+    "nowildfire",
+    "wildfire"
+  ],
+  "ram_pico_mb": 2572.591104,
+  "gpu_mem_pico_mb": 1272.0,
+  "gpu_util_promedio_pct": 31.058823529411764
+}
