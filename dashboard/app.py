@@ -12,6 +12,7 @@ Lee un único archivo consolidado: data/benchmark_consolidado.csv
 """
 
 from pathlib import Path
+import os
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -30,7 +31,9 @@ TEXT_MUTED = "#9c9a97"
 PILL_INACTIVE_BG = "#1c1b1f"
 PILL_ACTIVE_BG = "#ffffff"
 PILL_ACTIVE_TEXT = "#0b0b0d"
-FONT = "-apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+FONT = "'Inter', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+FONT_MONO = "'IBM Plex Mono', 'Courier New', monospace"
+VERDE_ESTADO = "#3ecf8e"
 
 BASE_DIR = Path(__file__).parent
 RUTA_DATOS = BASE_DIR / "data" / "benchmark_consolidado.csv"
@@ -93,7 +96,8 @@ escalabilidad = calcular_escalabilidad(datos) if not datos.empty else pd.DataFra
 
 LAYOUT_OSCURO = dict(
     template="plotly_dark", paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
-    font=dict(color=TEXT, family=FONT), margin=dict(t=20, l=60, r=20, b=50),
+    font=dict(color=TEXT, family="Inter, -apple-system, Segoe UI, Roboto, Arial, sans-serif"),
+    margin=dict(t=20, l=60, r=20, b=50),
     legend=dict(orientation="h", y=-0.25, bgcolor="rgba(0,0,0,0)"),
 )
 
@@ -143,8 +147,9 @@ def figura_tiempos(dataset_pct):
     fig = go.Figure()
     for dispositivo, color in [("CPU", "#5c5a57"), ("GPU", ACCENT)]:
         parte = sub[sub["dispositivo"] == dispositivo]
-        fig.add_trace(go.Bar(x=parte["modelo"], y=parte["tiempo_s"], name=dispositivo, marker_color=color))
-    fig.update_layout(barmode="group", yaxis_title="Tiempo (s)", **LAYOUT_OSCURO)
+        fig.add_trace(go.Bar(x=parte["modelo"], y=parte["tiempo_s"], name=dispositivo, marker_color=color,
+                              text=parte["tiempo_s"].round(1), textposition="outside"))
+    fig.update_layout(barmode="group", yaxis_title="Tiempo (s) — escala log", yaxis_type="log", **LAYOUT_OSCURO)
     return fig
 
 
@@ -184,14 +189,18 @@ def figura_escalabilidad():
 
 def tarjeta_kpi(etiqueta, valor):
     return html.Div([
-        html.Div(etiqueta, style={"fontSize": "13px", "color": TEXT_MUTED}),
-        html.Div(valor, style={"fontSize": "26px", "fontWeight": "700", "color": TEXT, "marginTop": "4px"}),
-    ], style={"background": CARD_BG_ALT, "borderRadius": "12px", "padding": "20px 22px", "flex": "1"})
+        html.Div(etiqueta, style={"fontSize": "12px", "color": TEXT_MUTED, "textTransform": "uppercase",
+                                   "letterSpacing": "0.06em", "fontWeight": "600"}),
+        html.Div(valor, style={"fontSize": "26px", "fontWeight": "600", "color": TEXT, "marginTop": "6px",
+                                "fontFamily": FONT_MONO}),
+    ], style={"background": CARD_BG_ALT, "borderRadius": "12px", "padding": "20px 22px", "flex": "1",
+              "border": "1px solid #242226", "boxShadow": "0 6px 18px rgba(0,0,0,0.25)"})
 
 
 def tarjeta_panel(children):
     return html.Div(children, style={"background": CARD_BG, "borderRadius": "14px",
-                                      "padding": "20px", "border": "1px solid #2a282d"})
+                                      "padding": "20px", "border": "1px solid #2a282d",
+                                      "boxShadow": "0 8px 24px rgba(0,0,0,0.3)"})
 
 
 def slide_portada():
@@ -210,9 +219,10 @@ def slide_portada():
             tarjeta_kpi("Mayor speedup GPU", f"{max_speedup:.1f}x ({modelo_max}, {pct_max})"),
         ], style={"display": "flex", "gap": "16px", "marginBottom": "20px"}),
         tarjeta_panel([
-            html.Div("Hardware verificado", style={"color": ACCENT, "fontWeight": "700", "marginBottom": "8px"}),
+            html.Div([html.Span(className="status-dot"), "Hardware verificado"],
+                     style={"color": ACCENT, "fontWeight": "700", "marginBottom": "8px"}),
             html.Div("Nodo nukwa-01.cnca · GPU NVIDIA V100 · 24 núcleos CPU — confirmado con sacct/scontrol en Kabré.",
-                      style={"color": TEXT, "fontSize": "14px"}),
+                      style={"color": TEXT, "fontSize": "14px", "fontFamily": FONT_MONO}),
         ]),
     ])
 
@@ -233,11 +243,16 @@ def slide_throughput():
     ])
 
 
+RADIO_LABEL_STYLE = {"color": TEXT, "marginRight": "18px", "cursor": "pointer", "fontSize": "14px"}
+RADIO_INPUT_STYLE = {"marginRight": "6px", "cursor": "pointer"}
+
+
 def slide_tiempos():
     return html.Div([
         html.Div("Tiempo de entrenamiento", style={"color": ACCENT, "fontSize": "28px", "fontWeight": "800", "marginBottom": "16px"}),
         dcc.RadioItems(id="selector-pct-tiempo", options=[{"label": p, "value": p} for p in ORDEN_PCT],
-                       value="100%", inline=True, style={"marginBottom": "14px", "color": TEXT}),
+                       value="100%", inline=True, style={"marginBottom": "14px"},
+                       labelStyle=RADIO_LABEL_STYLE, inputStyle=RADIO_INPUT_STYLE),
         tarjeta_panel(dcc.Graph(id="grafico-tiempos", config={"displayModeBar": False})),
     ])
 
@@ -249,12 +264,12 @@ def slide_recursos():
                   style={"color": TEXT_MUTED, "fontSize": "13px", "marginBottom": "14px"}),
         html.Div([
             dcc.RadioItems(id="selector-pct-recursos", options=[{"label": p, "value": p} for p in ORDEN_PCT],
-                           value="100%", inline=True, style={"color": TEXT}),
+                           value="100%", inline=True, labelStyle=RADIO_LABEL_STYLE, inputStyle=RADIO_INPUT_STYLE),
             dcc.Dropdown(id="selector-metrica-recursos", options=[
                 {"label": "RAM pico (MB)", "value": "ram_pico_mb"},
                 {"label": "Memoria GPU pico (MB)", "value": "gpu_mem_pico_mb"},
-                {"label": "Uso promedio de GPU (%) — eficiencia", "value": "gpu_util_promedio_pct"},
-            ], value="gpu_util_promedio_pct", clearable=False, style={"width": "300px", "marginTop": "10px", "color": "#111"}),
+                {"label": "Uso de GPU (%) — eficiencia", "value": "gpu_util_promedio_pct"},
+            ], value="gpu_util_promedio_pct", clearable=False, style={"width": "360px", "marginTop": "10px", "color": "#111"}),
         ], style={"marginBottom": "16px"}),
         tarjeta_panel(dcc.Graph(id="grafico-recursos", config={"displayModeBar": False})),
     ])
@@ -294,11 +309,39 @@ app.index_string = f"""
 <title>{{%title%}}</title>
 {{%favicon%}}
 {{%css%}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
   body {{ background: {BG}; margin: 0; font-family: {FONT}; }}
   ::-webkit-scrollbar {{ width: 10px; }}
   ::-webkit-scrollbar-thumb {{ background: #2a282d; border-radius: 6px; }}
-  .pill-tabs .tab {{ border: none !important; }}
+
+  .nav-btn, .pill-btn, .csv-btn {{
+    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  }}
+  .nav-btn:hover, .csv-btn:hover {{ transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }}
+  .nav-btn:active, .csv-btn:active {{ transform: translateY(0px); }}
+  .pill-btn:hover {{ box-shadow: 0 2px 10px rgba(0,0,0,0.3); }}
+
+  .nav-btn:focus-visible, .pill-btn:focus-visible, .csv-btn:focus-visible {{
+    outline: 2px solid {ACCENT}; outline-offset: 2px;
+  }}
+
+  .status-dot {{
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: {VERDE_ESTADO}; margin-right: 8px; position: relative; top: -1px;
+    box-shadow: 0 0 0 0 rgba(62,207,142,0.6);
+    animation: pulso 2.2s ease-out infinite;
+  }}
+  @keyframes pulso {{
+    0%   {{ box-shadow: 0 0 0 0 rgba(62,207,142,0.55); }}
+    70%  {{ box-shadow: 0 0 0 8px rgba(62,207,142,0); }}
+    100% {{ box-shadow: 0 0 0 0 rgba(62,207,142,0); }}
+  }}
+  @media (prefers-reduced-motion: reduce) {{
+    .status-dot {{ animation: none; }}
+    .nav-btn, .pill-btn, .csv-btn {{ transition: none; }}
+  }}
 </style>
 </head>
 <body>
@@ -331,9 +374,9 @@ app.layout = html.Div([
                       style={"color": TEXT_MUTED, "fontSize": "12px"}),
         ]),
         html.Div([
-            html.Button("◀", id="btn-prev", n_clicks=0, style=NAV_BTN_STYLE),
-            html.Button("▶", id="btn-next", n_clicks=0, style={**NAV_BTN_STYLE, "marginLeft": "8px"}),
-            html.Button("⬇ CSV", id="btn-csv", n_clicks=0,
+            html.Button("◀", id="btn-prev", n_clicks=0, className="nav-btn", style=NAV_BTN_STYLE),
+            html.Button("▶", id="btn-next", n_clicks=0, className="nav-btn", style={**NAV_BTN_STYLE, "marginLeft": "8px"}),
+            html.Button("⬇ CSV", id="btn-csv", n_clicks=0, className="csv-btn",
                         style={**NAV_BTN_STYLE, "width": "auto", "borderRadius": "999px",
                                "padding": "0 16px", "marginLeft": "8px", "color": ACCENT}),
             dcc.Download(id="descarga-csv"),
@@ -343,7 +386,7 @@ app.layout = html.Div([
 
     # Píldoras de navegación (declaradas desde el inicio, no se recrean)
     html.Div([
-        html.Button(s["pill"], id=f"pill-{s['id']}", n_clicks=0,
+        html.Button(s["pill"], id=f"pill-{s['id']}", n_clicks=0, className="pill-btn",
                      style=PILL_STYLE_ACTIVE if i == 0 else PILL_STYLE)
         for i, s in enumerate(SLIDES)
     ], id="pill-nav", style={"padding": "16px 28px 0px 28px", "display": "flex", "flexWrap": "wrap"}),
@@ -432,4 +475,5 @@ def descargar_csv(n_clicks):
 
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    puerto = int(os.environ.get("PORT", 8050))
+    app.run(host="0.0.0.0", port=puerto, debug=False)
