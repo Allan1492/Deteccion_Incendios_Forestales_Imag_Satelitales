@@ -1,0 +1,19 @@
+dataset_pct,filas_train,filas_test,modelo,backend,tiempo_s,f1,ram_pico_mb,gpu_mem_pico_mb,gpu_util_promedio_pct,epocas_red_neuronal,nodo,cpus_asignadas,sesion_jupyter,notas,throughput_reg_s
+30%,11026780,2362882,Random Forest,CPU (sklearn),685.682033,0.810493,19313.930240,1.0,0.000000,,nukwa-01.cnca,24,598649,,16081.0
+30%,11026780,2362882,Random Forest,GPU (cuML),107.294924,0.801266,5726.670848,1522.0,13.000000,,nukwa-01.cnca,24,598649,,102771.0
+30%,11026780,2362882,XGBoost,CPU,74.334027,0.801828,10506.981376,1062.0,0.000000,,nukwa-01.cnca,24,598649,,148341.0
+30%,11026780,2362882,XGBoost,GPU (cuda),7.722229,0.801869,10537.250816,1706.0,90.333333,,nukwa-01.cnca,24,598649,,1427927.0
+30%,11026780,2362882,Red Neuronal,CPU,15.306139,0.816638,12026.540032,1520.0,0.000000,2,nukwa-01.cnca,24,598649,tiempo_s es por epoca (no tiempo total),720416.0
+30%,11026780,2362882,Red Neuronal,GPU (cuda),3.947890,0.807617,12126.420992,1602.0,32.101695,2,nukwa-01.cnca,24,598649,tiempo_s es por epoca (no tiempo total),2793082.0
+60%,22053561,4725763,Random Forest,CPU (sklearn),1495.199814,0.809995,31793.659904,1.0,0.000000,,nukwa-01.cnca,24,598650,sesion distinta a 30%/100% - causa de anomalia sin confirmar aun,14750.0
+60%,22053561,4725763,Random Forest,GPU (cuML),208.308596,0.802765,5876.232192,2894.0,37.666667,,nukwa-01.cnca,24,598650,sesion distinta a 30%/100% - causa de anomalia sin confirmar aun,105870.0
+60%,22053561,4725763,XGBoost,CPU,196.716949,0.803241,12291.612672,1970.0,0.000000,,nukwa-01.cnca,24,598650,sesion distinta a 30%/100% - tiempo anomalo (mayor que el de 100%),112108.0
+60%,22053561,4725763,XGBoost,GPU (cuda),14.414996,0.803265,12175.040512,6074.0,90.571429,,nukwa-01.cnca,24,598650,sesion distinta a 30%/100%,1529904.0
+60%,22053561,4725763,Red Neuronal,CPU,31.529723,0.817090,14838.480896,2634.0,0.000000,2,nukwa-01.cnca,24,598650,tiempo_s es por epoca; sesion distinta a 30%/100% - tiempo anomalo (mayor que el de 100%),699453.0
+60%,22053561,4725763,Red Neuronal,GPU (cuda),8.230287,0.814060,14961.672192,2716.0,29.869919,2,nukwa-01.cnca,24,598650,tiempo_s es por epoca,2679562.0
+100%,36755935,7876272,Random Forest,CPU (sklearn),1582.563340,0.809398,48839.491584,1.0,0.000000,,nukwa-01.cnca,24,598649,,23226.0
+100%,36755935,7876272,Random Forest,GPU (cuML),240.792246,0.802836,8076.378112,4177.0,34.666667,,nukwa-01.cnca,24,598649,,152646.0
+100%,36755935,7876272,XGBoost,CPU,115.319145,0.803013,18584.023040,2497.0,0.000000,,nukwa-01.cnca,24,598649,,318732.0
+100%,36755935,7876272,XGBoost,GPU (cuda),16.933752,0.803129,18260.779008,6221.0,92.406250,,nukwa-01.cnca,24,598649,,2170572.0
+100%,36755935,7876272,Red Neuronal,CPU,15.172661,0.813827,22583.463936,3883.0,0.000000,8,nukwa-01.cnca,24,598649,tiempo_s es por epoca; usa 8 epocas (no 2 como 30%/60%) - no comparable directo,2422511.0
+100%,36755935,7876272,Red Neuronal,GPU (cuda),7.818050,0.817667,22658.527232,3965.0,24.017094,8,nukwa-01.cnca,24,598649,tiempo_s es por epoca; usa 8 epocas (no 2 como 30%/60%) - no comparable directo,4701420.0
