@@ -5,12 +5,12 @@ Profesor: Johansell Villalobos Cubillo
 
 ## Descripción
 
-Sistema para la detección y el análisis de incendios forestales a partir de datos
-satelitales masivos, con énfasis en el procesamiento **paralelo y distribuido**.
-El objetivo específico es **reducir la tasa de falsas alarmas** en las detecciones
-de puntos de calor, combinando variables físicas y contextuales.
-
-El proyecto se ejecuta sobre el clúster de alto rendimiento **Kabré** (CeNAT).
+Pipeline completo de cómputo paralelo y distribuido para la detección y el
+análisis de incendios forestales a partir de datos satelitales masivos,
+ejecutado sobre el clúster de alto rendimiento **Kabré** (CeNAT). El objetivo
+específico es **reducir la tasa de falsas alarmas** en las detecciones de puntos
+de calor, combinando variables físicas y contextuales, además de clasificar
+imágenes satelitales mediante aprendizaje profundo.
 
 ## Equipo
 
@@ -27,20 +27,23 @@ El proyecto se ejecuta sobre el clúster de alto rendimiento **Kabré** (CeNAT).
 - **NASA FIRMS** — puntos de calor VIIRS (Suomi-NPP, NOAA-20, NOAA-21),
   30 jun 2025 – 30 jun 2026, **52 508 485 registros**, 1.24 GB en Parquet.
   Fuente: https://firms.modaps.eosdis.nasa.gov/
-- **Kaggle Wildfire Prediction Dataset** — imágenes satelitales (Etapa 4, pendiente).
+- **Kaggle Wildfire Prediction Dataset** — 42 850 imágenes satelitales
+  (`wildfire` / `nowildfire`), ~6.5 GB, para la CNN.
   https://www.kaggle.com/datasets/abdelghaniaaba/wildfire-prediction-dataset
 
-> Los archivos de datos NO se versionan (ver `.gitignore`). Para reconstruir el
-> Parquet desde la fuente, usar `entrega2_benchmark/descargar_firms.py`.
+> Los archivos de datos NO se versionan (ver `.gitignore`). El Parquet crudo se
+> reconstruye con `entrega2_benchmark/descargar_firms.py`; las imágenes de
+> Kaggle se descargan según `modelado/README.md` (sección 5.1).
 
 ## Estructura del repositorio
 
 ```
 .
 ├── Notebook/                 Notebook de preprocesamiento (Etapas 1-2)
-├── entrega2_benchmark/       Benchmark de rendimiento (secuencial vs. paralelo)
+├── entrega2_benchmark/       Benchmark de rendimiento CPU (secuencial vs. paralelo)
 │   ├── descargar_firms.py    Descarga y consolidación de datos FIRMS
 │   ├── verificar_parquet.py  Verificación de integridad del Parquet
+│   ├── preparar_dataset_modelo.py  Genera la tabla lista para el modelo (Etapa 2)
 │   ├── bench_run.py          Ejecuta una configuración del benchmark
 │   ├── run_all.sh            Driver: recorre todas las configuraciones
 │   ├── analizar_resultados.py  Métricas (speedup, eficiencia) y gráficos
@@ -48,16 +51,20 @@ El proyecto se ejecuta sobre el clúster de alto rendimiento **Kabré** (CeNAT).
 │   └── submit_kabre.slurm    Job de SLURM
 ├── eda/                      Análisis exploratorio
 │   └── eda_real.py           EDA sobre los datos reales (streaming)
-├── resultados/               CSV de resultados y figuras generadas
-└── informes/                 Informes IEEE (LaTeX/PDF)
+├── modelado/                 Etapa 4: modelado tabular (cuML/XGBoost/NN) y CNN
+│   ├── notebooks/            Notebooks de exploración, modelado, hiperparámetros,
+│   │                         benchmark CPU vs. GPU y CNN de imágenes
+│   └── resultados/           Tablas (CSV/JSON) y figuras generadas
+├── dashboard/               Etapa 6: dashboard interactivo (Plotly/Dash)
+├── resultados/              Figuras del benchmark de CPU y del EDA
+└── informes/                Informes IEEE (Entregas 1, 2 y 3, en LaTeX/PDF)
 ```
 
 ## Requisitos
 
-- Python 3.11 (Miniforge/Conda recomendado)
-- Ver dependencias en `pyproject.toml`
+- Python 3.11 (Miniforge/Conda recomendado).
 
-Instalación rápida del entorno de CPU:
+Entorno de CPU:
 
 ```bash
 conda create -n incendios -c conda-forge python=3.11 polars pandas pyarrow \
@@ -65,21 +72,30 @@ conda create -n incendios -c conda-forge python=3.11 polars pandas pyarrow \
 conda activate incendios
 ```
 
-En el clúster Kabré, usar `entrega2_benchmark/setup_kabre.sh`.
+En Kabré, usar `entrega2_benchmark/setup_kabre.sh`. Para la parte de GPU
+(RAPIDS cuML, PyTorch con CUDA), ver `modelado/README.md`.
 
-## Uso
+## Reproducción (resumen)
 
 ```bash
-# 1. Obtener/verificar los datos
+# 1. Verificar los datos
 python entrega2_benchmark/verificar_parquet.py /ruta/incendios_global_consolidado.parquet
 
-# 2. Análisis exploratorio
+# 2. Preparar la tabla del modelo
+python entrega2_benchmark/preparar_dataset_modelo.py \
+    /ruta/incendios_global_consolidado.parquet /ruta/dataset_modelo.parquet
+
+# 3. Análisis exploratorio
 python eda/eda_real.py /ruta/incendios_global_consolidado.parquet eda_salida
 
-# 3. Benchmark de rendimiento (local o en Kabré vía sbatch)
-cd entrega2_benchmark
-./run_all.sh /ruta/incendios_global_consolidado.parquet resultados.csv
-python analizar_resultados.py resultados.csv --figuras figuras/
+# 4. Benchmark de preprocesamiento (CPU, en Kabré vía sbatch)
+cd entrega2_benchmark && sbatch submit_kabre.slurm
+
+# 5. Modelado y benchmark CPU vs. GPU
+#    Ver modelado/README.md (notebooks en orden)
+
+# 6. Dashboard de resultados
+cd dashboard && pip install -r requirements.txt && python app.py
 ```
 
 ## Estado del proyecto
@@ -87,16 +103,20 @@ python analizar_resultados.py resultados.csv --figuras figuras/
 | Etapa | Estado |
 |---|---|
 | 1. Adquisición y gestión de datos | Completada |
-| 2. Preprocesamiento paralelo/distribuido | Completada (artefacto de dataset limpio en curso) |
+| 2. Preprocesamiento paralelo/distribuido | Completada |
 | 3. Análisis exploratorio y estadístico | Completada |
-| 4. Modelado ML/IA (cuML + CNN) | Pendiente (Entrega 3) |
-| 5. Postprocesamiento y análisis de resultados | Parcial (benchmark de rendimiento hecho) |
-| 6. Visualización interactiva (dashboard) | Pendiente (Entrega 3) |
+| 4. Modelado ML/IA (cuML, XGBoost, red neuronal + CNN) | Completada |
+| 5. Postprocesamiento y análisis de rendimiento (CPU y GPU) | Completada |
+| 6. Visualización interactiva (dashboard) | Completada |
 
-### Resultados preliminares de rendimiento (Kabré, nodo de 40 núcleos)
+## Resultados principales
 
-- Speedup global de hasta **45×** frente a la línea base secuencial (pandas 1 hilo).
-- Saturación del paralelismo de memoria compartida en torno a los **16 hilos**
-  (consistente con la ley de Amdahl).
-- El paralelismo por procesos (Dask) falla por memoria con ≥8 *workers* en las
-  operaciones intensivas.
+- **Preprocesamiento paralelo (CPU):** speedup global de hasta **45×** frente a la
+  línea base secuencial; saturación en torno a los 16 hilos (ley de Amdahl).
+- **Modelos tabulares (GPU):** F1 de hasta **0.82** y ROC-AUC de **0.98** en la
+  reducción de falsas alarmas (Random Forest, XGBoost, red neuronal).
+- **Clasificación de imágenes (CNN, ResNet18):** F1 de **0.96** y ROC-AUC de **0.99**.
+- **CPU vs. GPU:** aceleraciones de hasta **6.8×**, con diferencias marcadas en la
+  utilización efectiva de GPU entre algoritmos (XGBoost ~96 % vs. red neuronal ~38 %).
+
+El informe técnico completo está en `informes/`.

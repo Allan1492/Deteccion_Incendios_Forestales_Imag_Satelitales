@@ -1,0 +1,531 @@
+%=========================================================================
+%  ENTREGA 3 -- INFORME TECNICO FINAL (integra Entregas 1, 2 y 3)
+%  Curso: Computación Paralela y Distribuida (TTCT0017) -- LEAD University
+%  Profesor: Johansell Villalobos Cubillo
+%  Tema: Detección de Incendios Forestales con Imágenes Satelitales
+%
+%  USO EN OVERLEAF
+%  1. Proyecto nuevo -> pegar como "main.tex". Compilador: pdfLaTeX.
+%  2. Crear carpeta "figuras/" y subir los PNG del repo con estos nombres
+%     (renombrar quitando espacios donde se indica):
+%       De resultados/figuras_eda/:
+%         01_serie_diaria.png 02_mensual.png 03_horaria.png
+%         04_mapa_dispersion.png 07_confianza.png 08_frp.png 09_correlacion.png
+%       De resultados/figuras_benchmark/:
+%         speedup_agregacion.png eficiencia.png throughput.png
+%         escalabilidad_debil.png tiempos_por_backend.png
+%       De modelado/resultados/figuras/:
+%         01_balance_clases.png 03_comparacion_metricas.png 04_curvas_roc.png
+%         05_matrices_confusion.png 06_tiempos_computo.png 07_uso_recursos.png
+%         09_busqueda_hiperparametros.png 10_cnn_curvas_entrenamiento.png
+%         11_cnn_matriz_confusion.png
+%         08_speedup_cpu_vs_gpu.png  (este ya viene sin espacios)
+%=========================================================================
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning}
+\usepackage{stfloats}
+
+% --- Colocación de flotantes más ordenada (menos huecos) ---
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.08}
+\renewcommand{\floatpagefraction}{0.80}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{5}
+
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+\addto\captionsspanish{\renewcommand{\figurename}{Fig.}}
+\addto\captionsspanish{\renewcommand{\tablename}{TABLA}}
+
+\lstdefinestyle{py}{basicstyle=\ttfamily\scriptsize,keywordstyle=\color{blue!70!black},
+ commentstyle=\color{green!50!black}\itshape,stringstyle=\color{orange!80!black},
+ breaklines=true,frame=single,framesep=4pt,showstringspaces=false,columns=fullflexible,language=Python}
+
+\begin{document}
+
+\title{Reducción de Falsas Alarmas en la Detección Satelital de Incendios Forestales mediante Análisis Multivariable Acelerado por GPU sobre HPC\\
+\large{Informe Técnico Final}}
+
+\author{
+\IEEEauthorblockN{Allan Arnulfo Montes Monge, Esteban Gutiérrez Saborío, Maria Moroney Sole,\\ Marlon Mora Delgado y Robson Sthiffen Calvo Ortega}
+\IEEEauthorblockA{\textit{Curso TTCT0017 -- Computación Paralela y Distribuida}\\
+\textit{LEAD University} -- Profesor: Johansell Villalobos Cubillo\\
+San José, Costa Rica\\
+Repositorio: \url{https://github.com/Allan1492/Deteccion_Incendios_Forestales_Imag_Satelitales}}
+}
+
+\maketitle
+
+\begin{abstract}
+Los incendios forestales constituyen una amenaza ambiental creciente cuyo monitoreo satelital genera volúmenes de datos que superan la capacidad de los enfoques secuenciales. Este trabajo presenta el desarrollo completo de un pipeline de cómputo paralelo y distribuido para la detección y el análisis de incendios forestales, ejecutado sobre el clúster de alto rendimiento Kabré del CeNAT. Se integran dos fuentes reales: 52\,508\,485 detecciones de puntos de calor de NASA FIRMS (sensor VIIRS) y 42\,850 imágenes satelitales del \textit{Wildfire Prediction Dataset}. El problema aplicado es la reducción de falsas alarmas en las detecciones. El proyecto abarca seis etapas: adquisición y gestión de datos, preprocesamiento paralelo, análisis exploratorio, modelado de aprendizaje automático y profundo, análisis de rendimiento y visualización interactiva. El preprocesamiento paralelo alcanza un \textit{speedup} global de hasta $45\times$ frente a la línea base secuencial, con saturación en torno a los 16 hilos; los modelos tabulares (Random Forest, XGBoost, red neuronal, acelerados por GPU) logran un F1 de hasta 0.82 y un ROC-AUC de 0.98, y la clasificación de imágenes mediante \textit{transfer learning} alcanza un F1 de 0.96 y un ROC-AUC de 0.99. El análisis CPU vs. GPU muestra aceleraciones de hasta $6.8\times$ y diferencias marcadas en la utilización efectiva del hardware. Se discuten los resultados a la luz de la ley de Amdahl y de los límites del paralelismo de memoria compartida, por procesos y por GPU.
+\end{abstract}
+
+\begin{IEEEkeywords}
+incendios forestales, teledetección, cómputo paralelo, cómputo distribuido, HPC, GPU, RAPIDS, PyTorch, speedup, escalabilidad, Kabré.
+\end{IEEEkeywords}
+
+% ========================================================= I
+\section{Introducción}
+Los incendios forestales han aumentado de forma sostenida en frecuencia, extensión y severidad durante las últimas décadas, impulsados por el aumento de las temperaturas, las sequías prolongadas y la acumulación de combustible vegetal. Sus consecuencias abarcan la pérdida de biodiversidad, la emisión de gases de efecto invernadero, el deterioro de la calidad del aire y daños a la infraestructura y a la vida humana. En este contexto, la detección temprana adquiere un valor estratégico.
+
+La teledetección satelital ofrece una fuente privilegiada de información al observar de forma continua y a escala planetaria las anomalías térmicas de la superficie. Sin embargo, el volumen de datos generado por las misiones modernas —millones de detecciones diarias y repositorios de imágenes de varios gigabytes— hace impráctico su procesamiento secuencial, lo que motiva el uso de técnicas de cómputo paralelo y distribuido.
+
+La motivación de este proyecto es doble. Por un lado, abordar un problema ambiental relevante: la \textbf{reducción de falsas alarmas} en la detección de incendios, ya que no toda anomalía térmica corresponde a un incendio forestal real y los falsos positivos tienen un costo operativo. Por otro, y como eje del curso, aplicar y evaluar de forma cuantitativa técnicas de paralelismo multinúcleo, procesamiento distribuido y aceleración por GPU sobre una infraestructura de alto rendimiento real.
+
+Este informe integra el trabajo completo del proyecto. La Sección~\ref{sec:related} revisa el trabajo relacionado; la~\ref{sec:marco}, el marco teórico; la~\ref{sec:problema}, la definición del problema; la~\ref{sec:datos}, los datos; la~\ref{sec:infra}, la infraestructura; la~\ref{sec:pipeline}, el diseño del pipeline; las Secciones~\ref{sec:e1}--\ref{sec:e6}, cada una de las seis etapas; la~\ref{sec:discusion}, la discusión; y la~\ref{sec:conclusion} concluye.
+
+% ========================================================= II
+\section{Trabajo Relacionado}
+\label{sec:related}
+La detección operacional de incendios se basa en la firma térmica en el infrarrojo medio. El algoritmo de Colección 6 de MODIS~\cite{giglio2016} y el producto de fuego activo de 375~m de VIIRS~\cite{schroeder2014} son la base de los productos que distribuye la NASA; la reducción de falsas alarmas (errores de comisión) ha sido uno de los principales motores de su evolución. En aprendizaje automático aplicado a la ciencia de incendios, Jain \textit{et al.}~\cite{jain2020} ofrecen una revisión exhaustiva que abarca detección, predicción de propagación y evaluación de riesgo. Para la clasificación de imágenes, las redes neuronales convolucionales, y en particular las redes residuales~\cite{he2016}, son el enfoque dominante, frecuentemente mediante \textit{transfer learning}.
+
+En cómputo de datos a gran escala, Dask~\cite{rocklin2015} se ha consolidado como marco de paralelización en Python; el ecosistema RAPIDS~\cite{rapids} lo extiende a GPU mediante cuDF y cuML; y Polars~\cite{polars} aporta un motor columnar de alto rendimiento sobre Apache Arrow. PyTorch~\cite{paszke2019} es el marco de referencia para aprendizaje profundo acelerado. Este proyecto se sitúa en la intersección de ambas líneas, con énfasis explícito en el diseño paralelo y la medición del rendimiento.
+
+% ========================================================= III
+\section{Marco Teórico}
+\label{sec:marco}
+\subsection{Modalidades de paralelismo}
+El cómputo paralelo reduce el tiempo de ejecución dividiendo un problema en subtareas simultáneas. Se distinguen el \textit{paralelismo multinúcleo} (varios núcleos con memoria compartida), el \textit{procesamiento distribuido} (varios procesos o nodos que cooperan por paso de mensajes) y la \textit{aceleración por GPU} (miles de hilos ligeros bajo un modelo SIMT). Cada modalidad tiene límites propios que este proyecto ilustra empíricamente.
+
+\subsection{Métricas de rendimiento}
+El \textit{speedup} con $p$ unidades de procesamiento se define como
+\begin{equation}
+S(p) = \frac{T_1}{T_p},
+\end{equation}
+donde $T_1$ es el tiempo secuencial y $T_p$ el paralelo. La eficiencia es
+\begin{equation}
+E(p) = \frac{S(p)}{p}.
+\end{equation}
+El límite teórico lo acota la ley de Amdahl~\cite{amdahl1967}, que para una fracción paralelizable $f$ establece
+\begin{equation}
+S(p) = \frac{1}{(1-f) + \dfrac{f}{p}},
+\label{eq:amdahl}
+\end{equation}
+mientras que la ley de Gustafson~\cite{gustafson1988} ofrece una perspectiva orientada al escalado del tamaño del problema, base de la \textit{escalabilidad débil}. El análisis considera además la \textit{escalabilidad fuerte} (tamaño fijo, recursos crecientes), el \textit{throughput} (registros o imágenes por segundo), el uso de memoria y la utilización de GPU.
+
+\subsection{Aprendizaje automático y profundo}
+Para los datos tabulares se emplean clasificadores clásicos (Random Forest, \textit{gradient boosting}) y una red neuronal; para las imágenes, una red convolucional mediante \textit{transfer learning}. El entrenamiento es intensivo en cómputo y se beneficia de la aceleración por GPU, lo que lo convierte en un caso de estudio natural para el análisis de rendimiento.
+
+% ========================================================= IV
+\section{Definición del Problema}
+\label{sec:problema}
+Los sistemas de detección satelital generan numerosas detecciones de puntos de calor, pero no todas corresponden a incendios forestales reales: fuentes de calor industriales, quemas agrícolas, reflejos o ruido del sensor producen \textbf{falsas alarmas} con un costo operativo real, pues desvían recursos de respuesta hacia eventos inexistentes. Aunque los productos operacionales alcanzan errores de comisión bajos —del orden del 1.2\,\% para VIIRS y MODIS en píxeles de confianza nominal~\cite{schroeder2014,giglio2016}—, sobre decenas de millones de detecciones ese porcentaje se traduce en cientos de miles de falsos positivos, y la fracción de detecciones de baja confianza es sustancialmente mayor. El problema que se plantea es: \textit{a partir de la combinación de dos o más variables físicas y contextuales de cada detección, ¿es posible discriminar las detecciones confiables de las que probablemente son falsas alarmas, reduciendo la tasa de falsos positivos?} En lugar de confiar en un único umbral —como haría una regla simple—, se propone combinar varias señales para tomar una mejor decisión.
+
+\subsection{Definición operativa}
+El conjunto de FIRMS presenta una limitación clave: contiene únicamente detecciones y ninguna viene marcada como ``verdadera'' o ``falsa''; no existe una verdad de campo. Para abordar el problema de forma medible se adopta una definición operativa basada en el atributo \texttt{confidence} (nivel de confianza que el propio sistema asigna a cada detección): las detecciones de confianza \textbf{media o alta} se tratan como \textbf{válidas}, y las de confianza \textbf{baja} como \textbf{probables falsas alarmas}. Con esto, el problema se formaliza como una tarea de \textbf{clasificación binaria} bien definida. Es fundamental que la variable \texttt{confidence} se use únicamente para construir la etiqueta objetivo y \textbf{nunca como variable de entrada}, de modo que el modelo aprenda de las variables físicas y no ``copie'' la respuesta. En el conjunto analizado, la clase de baja confianza representa el 12.15\,\% de las detecciones (Sección~\ref{sec:e3}). La hipótesis central es que el contraste térmico $\Delta T = \texttt{brightness}-\texttt{bright\_t31}$, combinado con la potencia radiativa, permite discriminar las clases; la Sección~\ref{sec:e3} la contrasta empíricamente.
+
+% ========================================================= V
+\section{Datos}
+\label{sec:datos}
+El proyecto integra dos fuentes reales y complementarias (Tabla~\ref{tab:datos}).
+
+\textbf{NASA FIRMS (rama tabular).} Puntos de calor del sensor VIIRS (satélites Suomi-NPP, NOAA-20 y NOAA-21), del 30 de junio de 2025 al 30 de junio de 2026: 52\,508\,485 registros, 14 columnas, 1.24~GB en Apache Parquet, sin valores nulos. Las columnas \texttt{brightness} y \texttt{bright\_t31} conservan la nomenclatura de MODIS pero corresponden a las bandas VIIRS I-4 (3.74~$\mu$m, canal del fuego) e I-5 (11.45~$\mu$m, fondo térmico); su diferencia, $\Delta T$, mantiene el mismo significado físico.
+
+\textbf{Kaggle Wildfire Prediction Dataset (rama de imágenes).} 42\,850 imágenes satelitales de $350\times350$ píxeles etiquetadas en \texttt{wildfire}/\texttt{nowildfire}, aproximadamente 6.5~GB.
+
+\begin{table}[tb]
+\caption{Conjuntos de datos del proyecto}
+\label{tab:datos}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{p{2.0cm} p{2.6cm} p{2.6cm}}
+\toprule
+\textbf{Atributo} & \textbf{NASA FIRMS} & \textbf{Kaggle Wildfire} \\
+\midrule
+Tipo & Tabular (puntos de calor) & Imágenes satelitales \\
+Sensor/Fuente & VIIRS (SNPP, N20, N21) & MapBox / Quebec \\
+Volumen & 52\,508\,485 registros & 42\,850 imágenes \\
+Tamaño & 1.24~GB (Parquet) & $\approx$6.5~GB \\
+Uso & ML tabular + EDA & CNN (aprendizaje profundo) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ========================================================= VI
+\section{Infraestructura de Cómputo}
+\label{sec:infra}
+Los experimentos se ejecutaron en el clúster \textbf{Kabré} del Centro Nacional de Alta Tecnología (CeNAT), gestionado con SLURM. Se emplearon la partición \texttt{kura} (40 núcleos, 257~GB de RAM) para el procesamiento en CPU y las particiones \texttt{nukwa} con GPUs NVIDIA (V100 y L40S) para el modelado acelerado. El entorno de CPU se construyó con Miniforge (Python~3.11, Polars, Dask); el de GPU con el entorno \texttt{rapids} del clúster y PyTorch con CUDA. Todo el cómputo intensivo se despachó mediante \texttt{sbatch}/\texttt{srun} reservando nodos completos, para no contaminar las mediciones con la carga de otros usuarios. Los datos masivos se almacenaron en el sistema de archivos \texttt{/data} (100~GB de cuota), no en \texttt{/home} (10~GB).
+
+\subsection{Configuración experimental}
+\label{sec:config}
+Para garantizar la reproducibilidad, la Tabla~\ref{tab:config} resume la configuración experimental. El benchmark de preprocesamiento se ejecutó en la partición \texttt{kura} (memoria compartida), reservando un nodo completo de 40 núcleos y fijando las variables \texttt{OMP\_NUM\_THREADS}, \texttt{OPENBLAS\_NUM\_THREADS} y \texttt{MKL\_NUM\_THREADS} en 1 para impedir que las bibliotecas de álgebra lineal generaran hilos adicionales que contaminaran la medición del paralelismo. El modelado y el benchmark CPU vs. GPU se ejecutaron en la partición \texttt{nukwa} con GPU NVIDIA. Cada configuración del benchmark de CPU se repitió tres veces, reportándose la mediana; los modelos se evaluaron sobre una partición de prueba independiente (\textit{hold-out}).
+
+\begin{table}[tb]
+\caption{Configuración experimental}
+\label{tab:config}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{p{2.4cm} p{5.1cm}}
+\toprule
+\textbf{Componente} & \textbf{Detalle} \\
+\midrule
+Clúster & Kabré (CeNAT), gestor SLURM \\
+Nodo CPU & Partición \texttt{kura}: 40 núcleos, 257~GB RAM \\
+Nodo GPU & Partición \texttt{nukwa}: GPU NVIDIA (V100/L40S) \\
+Lenguaje & Python 3.11 \\
+Preprocesamiento & pandas, Polars, Dask (Miniforge) \\
+Modelado & RAPIDS cuML, XGBoost, PyTorch (CUDA) \\
+Visualización & Plotly, Dash \\
+Repeticiones & 3 por config. (mediana); \textit{hold-out} para modelos \\
+Escalas & 30\,\%, 60\,\% y 100\,\% del dataset (GPU) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ========================================================= VII
+\section{Diseño del Pipeline}
+\label{sec:pipeline}
+El sistema se organiza en seis etapas (Fig.~\ref{fig:pipeline}). La rama tabular (FIRMS) y la rama de imágenes (Kaggle) se procesan en paralelo y son \textbf{independientes}: no se combinan en un único modelo, sino que resuelven dos tareas complementarias bajo el mismo marco de cómputo paralelo, convergiendo en el análisis de resultados y la visualización.
+
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\scriptsize},
+  b/.style={rectangle, rounded corners, draw, thick, fill=blue!8,
+            text width=3.0cm, minimum height=6mm, align=center},
+  arr/.style={-{Stealth[length=2mm]}, thick}]
+\node[b] (d) {1. Adquisición y gestión de datos};
+\node[b, below left=6mm and -1.4cm of d] (p1) {2a. Preproc. tabular\\ \textit{Polars/Dask}};
+\node[b, below right=6mm and -1.4cm of d] (p2) {2b. Preproc. imágenes\\ \textit{PyTorch}};
+\node[b, below=5mm of p1] (e) {3. EDA};
+\node[b, below=5mm of p2] (c) {4b. CNN (GPU)};
+\node[b, below=5mm of e] (m) {4a. ML tabular (GPU)};
+\node[b, below=17mm of d] (r) {5. Análisis de rendimiento};
+\node[b, below=5mm of r] (v) {6. Dashboard (Dash)};
+\draw[arr] (d)--(p1); \draw[arr] (d)--(p2);
+\draw[arr] (p1)--(e); \draw[arr] (p2)--(c);
+\draw[arr] (e)--(m);
+\draw[arr] (m.south) to[out=-90,in=180] (r.west);
+\draw[arr] (c.south) to[out=-90,in=0] (r.east);
+\draw[arr] (r)--(v);
+\end{tikzpicture}
+\caption{Pipeline de seis etapas con dos ramas paralelas e independientes.}
+\label{fig:pipeline}
+\end{figure}
+
+% ========================================================= VIII (plan)
+\section{Plan de Trabajo y Organización}
+\label{sec:plan}
+El proyecto se organizó en cuatro entregas incrementales (con pesos de 20\,\%, 30\,\%, 40\,\% y 10\,\%) desarrolladas entre las semanas 8 y 14 del cuatrimestre, según el cronograma de la Tabla~\ref{tab:cronograma}. El trabajo se repartió de forma equitativa entre los cinco integrantes, cada uno responsable principal de una etapa del pipeline: adquisición y gestión de datos junto con la administración del repositorio (E. Gutiérrez); preprocesamiento paralelo y distribuido (A. Montes); análisis exploratorio y estadístico (M. Moroney); modelado de aprendizaje automático y profundo (M. Mora); y postprocesamiento, análisis de rendimiento y visualización (R. Calvo). La redacción del informe, la administración del repositorio y la presentación se coordinaron de forma compartida.
+
+\begin{table}[tb]
+\caption{Cronograma del proyecto (semanas 8 a 14)}
+\label{tab:cronograma}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{c l l}
+\toprule
+\textbf{Sem.} & \textbf{Fase / Entrega} & \textbf{Etapa} \\
+\midrule
+8  & Adquisición y gestión de datos & Etapa 1 \\
+9  & Preprocesamiento paralelo/distrib. & Etapa 2 \\
+10 & EDA + \textbf{Entrega 2} (30\,\%) & Etapa 3 \\
+11 & Modelado ML/IA & Etapa 4 \\
+12 & Optimización y postprocesamiento & Etapas 4--5 \\
+13 & Rendimiento, visualización, informe & Etapas 5--6 \\
+14 & \textbf{Entrega 3} (40\,\%) + \textbf{Entrega 4} (10\,\%) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ========================================================= IX
+\section{Etapa 1: Adquisición y Gestión de Datos}
+\label{sec:e1}
+Los registros de FIRMS se descargaron de la fuente y se consolidaron en un único archivo Parquet, formato elegido por su compresión eficiente, su lectura selectiva por columnas y su compatibilidad nativa con los motores paralelos del proyecto. Durante el desarrollo se detectó que una copia del archivo estaba \textbf{truncada}, lo que provocó que el análisis se ejecutara, sin aviso, sobre datos sintéticos de respaldo. Para evitar la repetición del problema se incorporó al pipeline una rutina de verificación de integridad que comprueba los bytes mágicos \texttt{PAR1}, valida los metadatos, realiza una lectura de prueba y confirma la presencia de las columnas requeridas antes de cada trabajo de cómputo. Dado que las cuentas del clúster son personales, los datos se compartieron entre el equipo mediante almacenamiento en la nube, cargándose luego a \texttt{/data} en cada cuenta.
+
+% ========================================================= IX
+\section{Etapa 2: Preprocesamiento Paralelo y Rendimiento}
+\label{sec:e2}
+\subsection{Preprocesamiento y variables derivadas}
+La rama tabular se limpió y transformó con Polars y Dask. Se calcularon las variables del modelo: el contraste térmico $\Delta T$, el mes (de la fecha), la hora (de \texttt{acq\_time}), un indicador de noche y la variable objetivo \texttt{es\_falsa\_alarma}. Se descartaron registros con potencia radiativa negativa o coordenadas fuera de rango. El resultado se escribió en \textit{streaming} (\texttt{sink\_parquet}), procesando los 52.5 millones de registros por bloques sin materializarlos en memoria.
+
+\subsection{Diseño del \textit{benchmark}}
+Para evaluar la ganancia del paralelismo se comparó una línea base \textbf{estrictamente secuencial} (pandas restringido a un hilo) contra Polars (memoria compartida, 1--40 hilos) y Dask (procesos distribuidos), sobre cuatro operaciones representativas: carga, filtrado, agregación y cálculo de características. La elección de pandas como base es deliberada: el motor \textit{in-memory} de Polars también es multihilo, por lo que no serviría como referencia secuencial.
+
+Se distinguen dos aceleraciones: la \textbf{global} ($T_{\text{pandas}}/T_p$), que mide la ganancia total de cambiar de motor y paralelizar; y la \textbf{paralela} ($T_{\text{motor}}(1)/T_{\text{motor}}(p)$), que aísla el efecto del paralelismo. La eficiencia se calcula con la segunda, pues usar la global produciría eficiencias superiores al 100\,\%. Cada configuración se repitió tres veces, reportándose la mediana.
+
+\subsection{Resultados}
+La Tabla~\ref{tab:bench_cpu} y la Fig.~\ref{fig:speedup_cpu} resumen los resultados de la agregación. Se alcanza un \textbf{speedup global de hasta $45\times$}, descompuesto en $4.97\times$ por el cambio de motor y $9.14\times$ por el paralelismo. El sistema \textbf{satura en torno a los 16 hilos}: más allá, el tiempo deja de mejorar y la eficiencia cae de 57\,\% (16 hilos) a 20\,\% (40 hilos), como muestra la Fig.~\ref{fig:eficiencia}. Este comportamiento es consistente con la ley de Amdahl (Ec.~\ref{eq:amdahl}): la fracción no paralelizable (lectura de disco, coordinación) y la contención por el ancho de banda de memoria imponen un techo. El \textit{throughput} de Polars alcanza un máximo de 141 millones de filas por segundo hacia los 16 hilos, confirmando la misma tendencia de saturación.
+
+Un segundo hallazgo es que \textbf{Dask falla por memoria} en las operaciones intensivas al superar los 8 \textit{workers}: al ser paralelismo por procesos, cada \textit{worker} replica su porción de datos y el consumo total agota la memoria del nodo, límite ausente en el modelo de hilos de Polars. En el experimento de escalabilidad débil, en cambio, el \textit{throughput} de Polars se mantiene elevado y estable al crecer la carga en proporción a los hilos.
+
+\begin{table}[tb]
+\caption{Rendimiento del preprocesamiento (agregación, 52.5 M registros)}
+\label{tab:bench_cpu}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Motor} & \textbf{$p$} & \textbf{$T$ (s)} & \textbf{$S_{\text{par}}$} & \textbf{$E$ (\%)} \\
+\midrule
+pandas & 1  & 11.60 & ---  & --- \\
+Polars & 1  & 2.33  & 1.00 & 100 \\
+Polars & 4  & 0.613 & 3.80 & 95 \\
+Polars & 8  & 0.354 & 6.59 & 82 \\
+Polars & 16 & 0.255 & 9.14 & 57 \\
+Polars & 32 & 0.275 & 8.48 & 27 \\
+Polars & 40 & 0.285 & 8.18 & 20 \\
+Dask   & 4  & 33.9  & 1.82 & 45 \\
+Dask   & $\geq 8$ & \multicolumn{3}{c}{fallo por memoria (\textit{workers} terminados)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/speedup_agregacion.png}
+\caption{Escalabilidad fuerte (speedup paralelo) de la agregación. La curva de Polars se aparta de la recta ideal y satura hacia los 16 hilos.}
+\label{fig:speedup_cpu}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/eficiencia.png}
+\caption{Eficiencia paralela frente al número de hilos. La caída sostenida refleja el efecto descrito por la ley de Amdahl.}
+\label{fig:eficiencia}
+\end{figure}
+
+% ========================================================= X
+\section{Etapa 3: Análisis Exploratorio}
+\label{sec:e3}
+El EDA se ejecutó con Polars en modo \textit{streaming} sobre los datos completos.
+
+\subsection{Distribución temporal y espacial}
+La serie temporal diaria (Fig.~\ref{fig:serie}) muestra una marcada estacionalidad, con un máximo de 399\,153 detecciones el 30 de agosto de 2025 y un mínimo invernal, coherente con la temporada de incendios boreal. El análisis mensual y horario confirma el patrón estacional y la mayor detectabilidad en determinadas franjas. Espacialmente, las mayores densidades se concentran en el centro de Canadá, Siberia y el África subsahariana; los tres satélites VIIRS aportan volúmenes casi idénticos.
+
+\subsection{Variable objetivo e hipótesis}
+La distribución de la variable objetivo (Fig.~\ref{fig:confianza}) presenta un desbalance aproximado de 7:1: 87.85\,\% de detecciones válidas frente a 12.15\,\% de baja confianza. Este desbalance implica que la exactitud no es una métrica adecuada, por lo que la evaluación se basa en precisión, exhaustividad, F1 y matriz de confusión.
+
+El hallazgo más relevante valida la hipótesis del proyecto (Tabla~\ref{tab:deltat}): el contraste térmico $\Delta T$ discrimina las clases. Las detecciones de alta confianza presentan un $\Delta T$ medio de 60.8~K, más del doble que las de baja confianza (28.1~K). Los focos que apenas se distinguen de su entorno térmico tienden a clasificarse con baja confianza, confirmando que las variables físicas contienen señal discriminativa. La distribución del FRP (Fig.~\ref{fig:frp}) está fuertemente sesgada a la derecha, típico de fenómenos de incendio.
+
+\begin{table}[tb]
+\caption{Contraste térmico y FRP medios por nivel de confianza}
+\label{tab:deltat}
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Confianza} & \textbf{$\Delta T$ (K)} & \textbf{FRP (MW)} & \textbf{Registros} \\
+\midrule
+Alta    & 60.81 & 28.21 & 2\,912\,108 \\
+Nominal & 34.78 &  8.41 & 43\,214\,217 \\
+Baja    & 28.11 & 12.79 & 6\,382\,160 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/01_serie_diaria.png}
+\caption{Serie temporal diaria de detecciones. El pico de finales de agosto corresponde a la temporada de incendios boreal.}
+\label{fig:serie}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=0.82\columnwidth]{figuras/07_confianza.png}
+\caption{Distribución del nivel de confianza (variable objetivo). Predomina la clase nominal; la baja confianza (\textit{proxy} de falsa alarma) es el 12.15\,\%.}
+\label{fig:confianza}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/08_frp.png}
+\caption{Distribución de la potencia radiativa del fuego (FRP), fuertemente sesgada a la derecha.}
+\label{fig:frp}
+\end{figure}
+
+% ========================================================= XI
+\section{Etapa 4: Modelado}
+\label{sec:e4}
+\subsection{Rama tabular: reducción de falsas alarmas}
+Sobre el conjunto preprocesado (11 predictoras, variable objetivo \texttt{es\_falsa\_alarma}) se entrenaron tres modelos, todos acelerados por GPU: \textbf{Random Forest} (RAPIDS cuML), \textbf{XGBoost} y una \textbf{red neuronal} (PyTorch). Previamente se realizó una búsqueda de hiperparámetros (Fig.~\ref{fig:hiperparam}) cuyo criterio de selección no fue únicamente el F1, sino, entre las configuraciones dentro de $0.01$ del mejor F1, la más rápida de entrenar; los valores elegidos se listan en la Tabla~\ref{tab:hp}.
+
+\begin{table}[tb]
+\caption{Hiperparámetros seleccionados}
+\label{tab:hp}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{l l}
+\toprule
+\textbf{Modelo} & \textbf{Configuración} \\
+\midrule
+Random Forest & \texttt{n\_estimators=100}, \texttt{max\_depth=16} \\
+XGBoost & \texttt{max\_depth=4}, \texttt{eta=0.3} \\
+Red Neuronal & \texttt{batch\_size=2048}, \texttt{lr=0.001} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La Tabla~\ref{tab:modelos} y las Figs.~\ref{fig:comp_metricas}--\ref{fig:matrices} resumen las métricas de calidad. Los tres modelos alcanzan un ROC-AUC cercano a 0.98, confirmando la capacidad discriminativa anticipada por el EDA. La red neuronal obtiene el mejor F1 (0.816); XGBoost destaca por su altísimo \textit{recall} (0.981), deseable cuando el costo de omitir una falsa alarma es alto. La elección operativa depende del compromiso entre precisión y exhaustividad.
+
+\begin{table}[tb]
+\caption{Modelos tabulares (GPU, dataset real, hiperparámetros ajustados)}
+\label{tab:modelos}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{l c c c c}
+\toprule
+\textbf{Modelo} & \textbf{Precisión} & \textbf{Recall} & \textbf{F1} & \textbf{ROC-AUC} \\
+\midrule
+Random Forest & 0.755 & 0.859 & 0.803 & 0.980 \\
+XGBoost & 0.678 & \textbf{0.981} & 0.802 & \textbf{0.983} \\
+Red Neuronal & 0.746 & 0.901 & \textbf{0.816} & 0.982 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/03_comparacion_metricas.png}
+\caption{Comparación de métricas de calidad entre los tres modelos tabulares.}
+\label{fig:comp_metricas}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/04_curvas_roc.png}
+\caption{Curvas ROC de los modelos tabulares; todas con AUC $\approx 0.98$.}
+\label{fig:roc}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/05_matrices_confusion.png}
+\caption{Matrices de confusión de los modelos tabulares.}
+\label{fig:matrices}
+\end{figure}
+
+\subsection{Rama de imágenes: clasificación con CNN}
+La clasificación de imágenes se abordó con \textit{transfer learning} sobre ResNet18 preentrenada en ImageNet, congelando las capas convolucionales y entrenando solo una nueva capa clasificadora (aproximadamente el 0.3\,\% de los parámetros), lo que reduce drásticamente el tiempo de entrenamiento. Sobre 30\,250 imágenes de entrenamiento y 6\,300 de prueba, el modelo alcanza los resultados de la Tabla~\ref{tab:cnn}, con las curvas de entrenamiento y la matriz de confusión de las Figs.~\ref{fig:cnn_curvas}--\ref{fig:cnn_matriz}. El dataset incluía imágenes truncadas que se toleraron habilitando la carga de imágenes incompletas.
+
+\begin{table}[tb]
+\caption{Clasificación de imágenes (CNN, ResNet18, GPU)}
+\label{tab:cnn}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{c c c c c}
+\toprule
+\textbf{Accuracy} & \textbf{Precisión} & \textbf{Recall} & \textbf{F1} & \textbf{ROC-AUC} \\
+\midrule
+0.961 & 0.973 & 0.955 & \textbf{0.964} & \textbf{0.992} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/10_cnn_curvas_entrenamiento.png}
+\caption{Curvas de entrenamiento de la CNN (pérdida y exactitud por época).}
+\label{fig:cnn_curvas}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=0.82\columnwidth]{figuras/11_cnn_matriz_confusion.png}
+\caption{Matriz de confusión de la CNN sobre el conjunto de prueba.}
+\label{fig:cnn_matriz}
+\end{figure}
+
+% ========================================================= XII
+\section{Etapa 5: Análisis de Rendimiento CPU vs. GPU}
+\label{sec:e5}
+El modelado se instrumentó para medir el rendimiento entrenando cada algoritmo en CPU y en GPU sobre los mismos datos, a tres escalas (30\,\%, 60\,\% y 100\,\% del dataset). La Tabla~\ref{tab:gpu} y la Fig.~\ref{fig:speedup_gpu} reportan los resultados a escala completa; la Fig.~\ref{fig:recursos} detalla el uso de recursos.
+
+\begin{table}[tb]
+\caption{Aceleración por GPU (100\% del dataset, $\approx$36.8 M registros de entrenamiento)}
+\label{tab:gpu}
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Modelo} & \textbf{CPU (s)} & \textbf{GPU (s)} & \textbf{Speedup} & \textbf{GPU util.} \\
+\midrule
+Random Forest & 1582.6 & 240.8 & 6.6$\times$ & 59\,\% \\
+XGBoost & 115.3 & 16.9 & 6.8$\times$ & \textbf{96\,\%} \\
+Red Neuronal$^{*}$ & 15.2 & 7.8 & 1.9$\times$ & 38\,\% \\
+\bottomrule
+\multicolumn{5}{l}{\scriptsize $^{*}$Tiempo por época.}
+\end{tabular}
+\end{table}
+
+El hallazgo más valioso no es la aceleración en sí, sino que \textbf{no toda aceleración por GPU es igual de eficiente}. XGBoost aprovecha la GPU al 96\,\%, mientras que la red neuronal apenas al 38\,\% y Random Forest al 59\,\% (Fig.~\ref{fig:recursos}). La baja utilización de la red neuronal se explica porque, con estos tamaños de lote, el cuello de botella no es el cómputo sino la alimentación de datos (I/O y transformación en CPU). De hecho, en la CNN de imágenes, aumentar el tamaño de lote y el número de trabajadores de carga redujo el tiempo de 302.6~s a 92.1~s ($3.3\times$) sin pérdida de calidad, ilustrando que el rendimiento depende tanto del algoritmo como del flujo de datos que lo alimenta.
+
+Se reporta con transparencia una anomalía observada: el Random Forest en CPU presentó tiempos casi idénticos a 60\,\% (1495~s) y a 100\,\% (1583~s) del dataset, en lugar de crecer proporcionalmente. La causa probable es que esas corridas se ejecutaron en sesiones distintas del clúster, con condiciones de carga del nodo diferentes; se documenta para no inducir conclusiones erróneas sobre la escalabilidad de ese algoritmo en CPU.
+
+\subsection{Cuellos de botella, balance de carga y comunicación}
+El análisis permite identificar los principales cuellos de botella del sistema. En el preprocesamiento, el cuello es el \textbf{ancho de banda de memoria} y la fracción secuencial de E/S, que provocan la saturación a partir de los 16 hilos (Sección~\ref{sec:e2}). En el modelado sobre GPU, el cuello se desplaza a la \textbf{alimentación de datos}: cuando el lote es pequeño, la carga y transformación en CPU no logran mantener ocupada la GPU, como evidencia la baja utilización de la red neuronal (38\,\%).
+
+Respecto al \textbf{balance de carga}, el modelo de hilos de Polars reparte el trabajo de forma homogénea entre los núcleos mediante su planificador interno, y en Dask el planificador distribuye las particiones entre los \textit{workers}; el desbalance solo aparece cuando el número de particiones no es múltiplo del número de \textit{workers}, lo que se mitigó ajustando el particionado. En cuanto a los \textbf{costos de comunicación}, son precisamente el factor que penaliza a Dask frente a Polars en un solo nodo: al ejecutarse como procesos independientes, Dask debe serializar y transferir datos entre \textit{workers} (comunicación entre procesos), un costo ausente en el modelo de memoria compartida de Polars, que comparte un único espacio de direcciones. Este sobrecosto de comunicación solo se amortiza cuando el volumen de datos o el número de nodos es suficientemente grande, escenario de la ejecución distribuida multinodo propuesta como trabajo futuro.
+
+Como \textbf{estrategias de optimización} se aplicaron: el uso de \textit{streaming} para evitar materializar los datos en memoria; el ajuste del tamaño de lote y del número de trabajadores de carga en la CNN (que redujo el tiempo $3.3\times$); y la selección de hiperparámetros ponderando calidad y tiempo de entrenamiento.
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/08_speedup_cpu_vs_gpu.png}
+\caption{Speedup GPU vs. CPU por modelo.}
+\label{fig:speedup_gpu}
+\end{figure}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\columnwidth]{figuras/07_uso_recursos.png}
+\caption{Uso de recursos: RAM pico, memoria y utilización de GPU por modelo.}
+\label{fig:recursos}
+\end{figure}
+
+% ========================================================= XIII
+\section{Etapa 6: Visualización Interactiva}
+\label{sec:e6}
+Los resultados de rendimiento se integraron en un \textit{dashboard} web interactivo construido con Plotly y Dash. La herramienta permite explorar, con filtros por modelo y por escala de datos, los tiempos de cómputo, el \textit{speedup} CPU vs. GPU, la utilización de recursos y las métricas de calidad, sirviendo como interfaz de comunicación de los hallazgos del proyecto y como demostración de apoyo en la presentación.
+
+% ========================================================= XIV
+\section{Discusión}
+\label{sec:discusion}
+El proyecto ilustra tres modalidades de paralelismo y sus límites característicos. El \textbf{paralelismo de memoria compartida} (Polars) ofrece la mejor relación rendimiento/complejidad para el preprocesamiento, pero satura cuando la fracción secuencial y el ancho de banda de memoria dominan (ley de Amdahl). El \textbf{paralelismo por procesos} (Dask) escala más allá de una máquina, pero paga un costo de memoria y coordinación que, en un solo nodo, lo hace fallar en operaciones intensivas. La \textbf{aceleración por GPU} (RAPIDS, PyTorch) brinda las mayores ganancias en el modelado, pero su eficiencia depende críticamente de mantener ocupado el dispositivo, lo que a su vez depende del algoritmo y del flujo de datos. En conjunto, el trabajo confirma empíricamente que la ganancia del cómputo paralelo es real y cuantificable, pero está siempre acotada por la parte no paralelizable del problema y por la arquitectura de memoria.
+
+% ========================================================= XV
+\section{Conclusión y Trabajo Futuro}
+\label{sec:conclusion}
+Se desarrolló un pipeline completo de cómputo paralelo y distribuido para la detección de incendios forestales sobre datos reales y a escala (52.5 millones de registros y 42\,850 imágenes), ejecutado en el clúster Kabré. El preprocesamiento paralelo alcanzó un \textit{speedup} global de hasta $45\times$; los modelos tabulares lograron un ROC-AUC de 0.98 en la reducción de falsas alarmas, y la clasificación de imágenes un F1 de 0.96 y un ROC-AUC de 0.99. El análisis CPU vs. GPU evidenció aceleraciones de hasta $6.8\times$ y, sobre todo, diferencias sustanciales en la utilización efectiva del hardware entre algoritmos. Los resultados validan el diseño propuesto y, más allá del dominio de aplicación, constituyen un estudio concreto de los límites del paralelismo de memoria compartida, por procesos y por GPU.
+
+\subsection{Lecciones aprendidas}
+El proyecto dejó varias lecciones de valor práctico. Primero, la \textbf{integridad de los datos} no es trivial a escala: un archivo Parquet truncado provocó que el análisis corriera sin aviso sobre datos sintéticos de respaldo, lo que obligó a incorporar una verificación de integridad como paso obligatorio del pipeline. Segundo, \textbf{más paralelismo no siempre es mejor}: el punto de saturación en 16 hilos y el fallo por memoria de Dask muestran que la arquitectura de memoria impone límites que deben medirse, no asumirse. Tercero, en cómputo por GPU, \textbf{el cuello de botella no siempre es el modelo}: con frecuencia es el flujo de datos que lo alimenta, y optimizarlo (tamaño de lote, trabajadores de carga) rindió aceleraciones mayores que cambiar el modelo. Cuarto, la \textbf{metodología de medición importa}: distinguir la aceleración por cambio de motor de la aceleración por paralelismo evitó reportar eficiencias imposibles. Estas lecciones son transferibles a cualquier proyecto de datos a gran escala.
+
+\subsection{Trabajo futuro}
+Como trabajo futuro se plantea la ejecución multinodo distribuida con Dask, la optimización del flujo de datos hacia la GPU para elevar su utilización, la incorporación de cuantificación de incertidumbre en las predicciones, y la integración de ambas ramas en un sistema de alerta operacional en tiempo casi real.
+
+\begin{thebibliography}{00}
+\bibitem{giglio2016} L. Giglio, W. Schroeder, y C. O. Justice, ``The collection 6 MODIS active fire detection algorithm and fire products,'' \textit{Remote Sensing of Environment}, vol. 178, pp. 31--41, 2016.
+\bibitem{schroeder2014} W. Schroeder, P. Oliva, L. Giglio, y I. A. Csiszar, ``The New VIIRS 375 m active fire detection data product,'' \textit{Remote Sensing of Environment}, vol. 143, pp. 85--96, 2014.
+\bibitem{jain2020} P. Jain \textit{et al.}, ``A review of machine learning applications in wildfire science and management,'' \textit{Environmental Reviews}, vol. 28, no. 4, pp. 478--505, 2020.
+\bibitem{he2016} K. He, X. Zhang, S. Ren, y J. Sun, ``Deep residual learning for image recognition,'' en \textit{Proc. IEEE CVPR}, 2016, pp. 770--778.
+\bibitem{rocklin2015} M. Rocklin, ``Dask: Parallel computation with blocked algorithms and task scheduling,'' en \textit{Proc. 14th Python in Science Conf.}, 2015, pp. 130--136.
+\bibitem{polars} R. Vink y col., ``Polars: Lightning-fast DataFrame library for Rust and Python.'' [En línea]. Disponible: \url{https://pola.rs/}
+\bibitem{rapids} RAPIDS Development Team, ``RAPIDS: Libraries for end-to-end GPU data science,'' NVIDIA. [En línea]. Disponible: \url{https://rapids.ai/}
+\bibitem{paszke2019} A. Paszke y col., ``PyTorch: An imperative style, high-performance deep learning library,'' en \textit{NeurIPS}, vol. 32, 2019, pp. 8024--8035.
+\bibitem{amdahl1967} G. M. Amdahl, ``Validity of the single processor approach to achieving large scale computing capabilities,'' en \textit{Proc. AFIPS}, 1967, pp. 483--485.
+\bibitem{gustafson1988} J. L. Gustafson, ``Reevaluating Amdahl's law,'' \textit{Communications of the ACM}, vol. 31, no. 5, pp. 532--533, 1988.
+\bibitem{kabre} Colaboratorio Nacional de Computación Avanzada, ``Kabré: infraestructura de supercomputación del CeNAT.'' [En línea]. Disponible: \url{https://kabre.cenat.ac.cr/}
+\bibitem{nasafirms} NASA, ``Fire Information for Resource Management System (FIRMS).'' [En línea]. Disponible: \url{https://firms.modaps.eosdis.nasa.gov/}
+\end{thebibliography}
+
+\end{document}

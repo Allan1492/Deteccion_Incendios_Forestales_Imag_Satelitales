@@ -1,128 +1,83 @@
-# Libro de Préstamos
+# Dashboard de Análisis de Rendimiento — Etapa 6
 
-App web para gestionar clientes, préstamos y pagos. Corre en cualquier navegador,
-se instala en pantalla de inicio en iPhone, y guarda todo en tu propia base de
-datos (Firebase Firestore), separada por cuenta de usuario.
+Proyecto: Detección de Incendios Forestales con Imágenes Satelitales
+Curso: TTCT0017 — Computación Paralela y Distribuida, LEAD University
+
+Dashboard web interactivo (Plotly + Dash) que comunica los resultados del
+análisis de rendimiento del proyecto: la comparación CPU vs. GPU de los modelos
+de la Etapa 4, con tiempos de cómputo, speedup, throughput, escalabilidad y uso
+de recursos.
 
 ## 1. Requisitos
 
-- [Node.js](https://nodejs.org) instalado (versión 18 o superior). Verifica con:
-  ```bash
-  node -v
-  ```
-- VS Code con la terminal integrada (Terminal → New Terminal).
-
-## 2. Instalar dependencias
-
-Abre esta carpeta en VS Code, abre la terminal, y corre:
+- Python 3.10 o superior.
+- Dependencias en `requirements.txt`:
 
 ```bash
-npm install
+pip install -r requirements.txt
 ```
 
-## 3. Crear tu backend en Firebase
+(`dash`, `pandas`, `plotly`)
 
-Sigue estos pasos una sola vez (10-15 min):
+## 2. Cómo ejecutarlo
 
-1. Ve a **https://console.firebase.google.com** → Crear proyecto.
-2. **Authentication** → Comenzar → pestaña "Sign-in method" → habilita **Correo electrónico/contraseña**.
-3. **Firestore Database** → Crear base de datos → modo producción → elige una región cercana.
-4. En **Reglas** de Firestore, pega el contenido del archivo `firestore.rules` de este proyecto y publica.
-5. Ícono de engranaje → Configuración del proyecto → "Tus apps" → ícono web `</>` → registra la app (sin marcar Hosting) → copia el objeto `firebaseConfig`.
-
-## 4. Configurar tus variables de entorno
+Desde esta carpeta:
 
 ```bash
-cp .env.example .env
+python app.py
 ```
 
-Abre `.env` y pega cada valor de tu `firebaseConfig`:
+Luego abrir en el navegador:
 
 ```
-VITE_FIREBASE_API_KEY=AIzaSy...
-VITE_FIREBASE_AUTH_DOMAIN=tu-proyecto.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=tu-proyecto
-VITE_FIREBASE_STORAGE_BUCKET=tu-proyecto.appspot.com
-VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
-VITE_FIREBASE_APP_ID=1:123456789:web:abc123
+http://127.0.0.1:8050
 ```
 
-**El archivo `.env` nunca se sube a git** (ya está en `.gitignore`). Si usas git/GitHub,
-verifica siempre con `git status` que `.env` no aparezca en la lista antes de un commit.
+## 3. Datos que consume
 
-## 5. Probarlo en local
-
-```bash
-npm run dev
-```
-
-Te da un link tipo `http://localhost:5173`. Ábrelo en tu navegador para probar. Para
-probarlo desde tu iPhone en la misma red, usa la IP local que Vite muestra en la terminal
-(algo como `http://192.168.x.x:5173`).
-
-## 6. Publicarlo con su propio link (Firebase Hosting)
-
-```bash
-npm install -g firebase-tools
-firebase login
-firebase init hosting
-```
-
-Cuando pregunte:
-- **"What do you want to use as your public directory?"** → responde `dist`
-- **"Configure as a single-page app?"** → responde `Yes`
-- **"Set up automatic builds with GitHub?"** → `No` (opcional, para más adelante)
-
-Luego, cada vez que quieras publicar cambios:
-
-```bash
-npm run build
-firebase deploy
-```
-
-Te da un link fijo tipo `https://tu-proyecto.web.app`. Ese es el que agregas a
-pantalla de inicio en iPhone (Safari → compartir → "Agregar a pantalla de inicio").
-
-## Sobre la seguridad de este proyecto
-
-- **Las credenciales de Firebase (`firebaseConfig`) no son un secreto en el sentido
-  clásico** — quedan visibles en cualquier app web de Firebase, incluso en producción,
-  porque el navegador necesita saber a qué proyecto conectarse. Aun así, las sacamos a
-  `.env` por buena práctica: mantiene el código limpio, evita subirlas por accidente a
-  un repositorio público, y facilita tener credenciales distintas para desarrollo/producción
-  más adelante.
-- **La seguridad real vive en `firestore.rules`.** Esas reglas son las que de verdad
-  impiden que alguien lea o escriba datos que no le pertenecen, y validan la forma de
-  los datos (montos positivos, campos correctos, etc.) incluso si alguien intenta
-  manipular las peticiones directamente. Cada vez que cambies la estructura de datos,
-  actualiza también las reglas.
-- **Autenticación por correo/contraseña** con verificación de correo al crear cuenta.
-  Cada usuario solo ve sus propios datos (aislados por `uid` en la base de datos).
-- **Antes de publicar en producción**, considera activar en la consola de Firebase:
-  - **App Check** (Configuración del proyecto → App Check) — evita que alguien use tu
-    base de datos desde fuera de tu app real.
-  - Límites de intentos de inicio de sesión (Firebase ya aplica algunos por defecto).
-- Si en algún momento compartes este repositorio (ej. en GitHub), verifica que sea
-  **privado** o que `.env` de verdad no se haya subido nunca — revisa el historial de
-  git si tienes dudas.
-
-## Estructura del proyecto
+El dashboard lee un único archivo consolidado:
 
 ```
-libro-prestamos-app/
-├── index.html          # Punto de entrada
-├── src/
-│   ├── main.js          # Toda la lógica: auth, base de datos, interfaz
-│   └── style.css         # Estilos
-├── firestore.rules      # Reglas de seguridad de la base de datos
-├── .env.example         # Plantilla de variables de entorno
-├── .env                 # Tus credenciales reales (no se sube a git)
-└── package.json
+dashboard/data/benchmark_consolidado.csv
 ```
 
-## Próximos pasos pendientes del proyecto
+Este CSV contiene los resultados del benchmark CPU vs. GPU generado en la
+Etapa 5 (notebook `modelado/notebooks/benchmark_cpu_vs_gpu.ipynb`), con una fila
+por combinación de modelo, dispositivo (CPU/GPU) y escala del dataset
+(30 %, 60 %, 100 %). Sus columnas principales son:
 
-- Recibos digitales descargables/compartibles
-- Informe "pre-día de pago" para enviar al cliente
-- Editar/eliminar clientes y préstamos
-- Exportar historial completo (respaldo manual adicional)
+| Columna | Descripción |
+|---|---|
+| `dataset_pct` | Escala del dataset (30 %, 60 %, 100 %) |
+| `modelo` | Random Forest, XGBoost o Red Neuronal |
+| `backend` | Dispositivo y librería (ej. `GPU (cuML)`, `CPU (sklearn)`) |
+| `tiempo_s` | Tiempo de entrenamiento (s) |
+| `f1` | F1-score del modelo |
+| `ram_pico_mb` | RAM pico (MB) |
+| `gpu_mem_pico_mb` | Memoria GPU pico (MB) |
+| `gpu_util_promedio_pct` | Utilización promedio de GPU (%) |
+| `throughput_reg_s` | Registros procesados por segundo |
+
+## 4. Qué muestra
+
+- **Speedup GPU vs. CPU** por modelo y escala de datos.
+- **Throughput** (registros/s) en escala logarítmica.
+- **Tiempos de cómputo** por modelo, filtrables por escala del dataset.
+- **Uso de recursos**: RAM pico, memoria GPU y utilización promedio de GPU.
+- **Escalabilidad**: índice de crecimiento del tiempo frente al tamaño del
+  dataset, comparado con el crecimiento lineal ideal.
+
+Los filtros permiten explorar cada métrica por escala de datos, para comunicar
+los hallazgos principales del proyecto: las aceleraciones alcanzadas por GPU y
+las diferencias de eficiencia (utilización de GPU) entre algoritmos.
+
+## 5. Estructura
+
+```
+dashboard/
+├── app.py                        Aplicación Dash (layout, figuras, callbacks)
+├── requirements.txt              Dependencias
+├── README.md                     Este archivo
+└── data/
+    └── benchmark_consolidado.csv Resultados del benchmark CPU vs. GPU
+```
