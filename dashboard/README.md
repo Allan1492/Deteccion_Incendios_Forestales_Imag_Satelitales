@@ -1,17 +1,15 @@
-# Dashboard de Análisis de Rendimiento — Etapa 6
+# Dashboard Interactivo — Etapa 6
 
 Proyecto: Detección de Incendios Forestales con Imágenes Satelitales
 Curso: TTCT0017 — Computación Paralela y Distribuida, LEAD University
 
-Dashboard web interactivo (Plotly + Dash) que comunica los resultados del
-análisis de rendimiento del proyecto: la comparación CPU vs. GPU de los modelos
-de la Etapa 4, con tiempos de cómputo, speedup, throughput, escalabilidad y uso
-de recursos.
+Panel web interactivo (Plotly + Dash) que comunica los resultados del proyecto,
+con un diseño tipo consola de instrumentos. Integra el problema, la calidad de
+los modelos y el análisis de rendimiento CPU vs. GPU en un solo lugar.
 
 ## 1. Requisitos
 
 - Python 3.10 o superior.
-- Dependencias en `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
@@ -33,51 +31,42 @@ Luego abrir en el navegador:
 http://127.0.0.1:8050
 ```
 
-## 3. Datos que consume
+## 3. Secciones
 
-El dashboard lee un único archivo consolidado:
+El panel se organiza en nueve secciones navegables:
+
+1. **Resumen** — indicadores clave del proyecto (registros, mayor speedup, mejor F1, F1 de la CNN).
+2. **El problema** — falsas alarmas, balance de clases y el hallazgo del contraste térmico (ΔT).
+3. **Modelos** — calidad de los tres modelos tabulares y la CNN (F1, ROC-AUC, precisión, recall) con gráfico de barras y radar comparativo.
+4. **Speedup** — aceleración GPU vs. CPU por modelo y escala.
+5. **Throughput** — registros procesados por segundo.
+6. **Tiempos** — tiempo de entrenamiento por modelo y escala.
+7. **Eficiencia** — uso de recursos y utilización real de GPU.
+8. **Escalabilidad** — índice de crecimiento del tiempo frente al volumen de datos.
+9. **Hallazgos** — conclusiones principales.
+
+## 4. Datos que consume (solo lectura)
 
 ```
-dashboard/data/benchmark_consolidado.csv
+dashboard/data/benchmark_consolidado.csv   Benchmark CPU vs. GPU (Etapa 5)
+dashboard/data/comparacion_modelos.csv     Calidad de los modelos tabulares (Etapa 4)
+dashboard/data/metricas_cnn.json           Métricas de la CNN de imágenes (Etapa 4)
 ```
 
-Este CSV contiene los resultados del benchmark CPU vs. GPU generado en la
-Etapa 5 (notebook `modelado/notebooks/benchmark_cpu_vs_gpu.ipynb`), con una fila
-por combinación de modelo, dispositivo (CPU/GPU) y escala del dataset
-(30 %, 60 %, 100 %). Sus columnas principales son:
+Estos archivos son copias de los resultados generados en las Etapas 4 y 5
+(carpeta `modelado/resultados/`). El dashboard no modifica ningún dato: solo
+los lee para visualizarlos.
 
-| Columna | Descripción |
-|---|---|
-| `dataset_pct` | Escala del dataset (30 %, 60 %, 100 %) |
-| `modelo` | Random Forest, XGBoost o Red Neuronal |
-| `backend` | Dispositivo y librería (ej. `GPU (cuML)`, `CPU (sklearn)`) |
-| `tiempo_s` | Tiempo de entrenamiento (s) |
-| `f1` | F1-score del modelo |
-| `ram_pico_mb` | RAM pico (MB) |
-| `gpu_mem_pico_mb` | Memoria GPU pico (MB) |
-| `gpu_util_promedio_pct` | Utilización promedio de GPU (%) |
-| `throughput_reg_s` | Registros procesados por segundo |
-
-## 4. Qué muestra
-
-- **Speedup GPU vs. CPU** por modelo y escala de datos.
-- **Throughput** (registros/s) en escala logarítmica.
-- **Tiempos de cómputo** por modelo, filtrables por escala del dataset.
-- **Uso de recursos**: RAM pico, memoria GPU y utilización promedio de GPU.
-- **Escalabilidad**: índice de crecimiento del tiempo frente al tamaño del
-  dataset, comparado con el crecimiento lineal ideal.
-
-Los filtros permiten explorar cada métrica por escala de datos, para comunicar
-los hallazgos principales del proyecto: las aceleraciones alcanzadas por GPU y
-las diferencias de eficiencia (utilización de GPU) entre algoritmos.
+Columnas principales de `benchmark_consolidado.csv`: `dataset_pct`, `modelo`,
+`backend`, `tiempo_s`, `f1`, `ram_pico_mb`, `gpu_mem_pico_mb`,
+`gpu_util_promedio_pct`, `throughput_reg_s`.
 
 ## 5. Estructura
 
 ```
 dashboard/
-├── app.py                        Aplicación Dash (layout, figuras, callbacks)
-├── requirements.txt              Dependencias
-├── README.md                     Este archivo
-└── data/
-    └── benchmark_consolidado.csv Resultados del benchmark CPU vs. GPU
+├── app.py             Aplicación Dash (diseño, figuras y callbacks)
+├── requirements.txt   Dependencias
+├── README.md          Este archivo
+└── data/              Datos de resultados (solo lectura)
 ```

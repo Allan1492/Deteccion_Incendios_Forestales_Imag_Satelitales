@@ -1,51 +1,65 @@
 """
-Dashboard de Análisis de Rendimiento — Etapa 5 (estilo "slides" oscuro)
-Proyecto: Detección de Incendios Forestales con Imágenes Satelitales
-Responsable: Robson Sthiffen Calvo Ortega
+Dashboard Interactivo — Detección de Incendios Forestales (Etapa 6)
+Proyecto: Reducción de Falsas Alarmas mediante Análisis Multivariable sobre HPC
+Curso: TTCT0017 — Computación Paralela y Distribuida, LEAD University
+
+Diseño: consola de instrumentos / panel de misión (rampa térmica).
 
 Cómo correrlo:
     pip install -r requirements.txt
     python app.py
-Luego abrí http://127.0.0.1:8050 en el navegador.
+Luego abrir http://127.0.0.1:8050
 
-Lee un único archivo consolidado: data/benchmark_consolidado.csv
+Datos (solo lectura, no se modifican):
+    data/benchmark_consolidado.csv   -> rendimiento CPU vs GPU (Etapa 5)
+    data/comparacion_modelos.csv     -> calidad de los modelos tabulares (Etapa 4)
+    data/metricas_cnn.json           -> métricas de la CNN de imágenes (Etapa 4)
 """
 
 from pathlib import Path
+import json
 import os
 
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, dcc, html, Input, Output, State, ctx
 
-# ---------------------------------------------------------------------------
-# 1. Paleta y configuración visual
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# 1. Sistema de diseño — "Thermal Console"
+# ===========================================================================
+BG        = "#07070a"
+INK       = "#f3f1ec"
+MUTED     = "#8b8892"
+FAINT     = "#5a5862"
+HAIR      = "#1a1a22"
+CARD      = "#0e0e13"
+CARD_2    = "#121218"
+EMBER     = "#ff5e1a"     # ascua
+EMBER_HI  = "#ff8a3d"
+EMBER_LO  = "#c23a00"
+GOLD      = "#ffcf6b"
+SIGNAL    = "#35e08b"     # GPU / señal
+COOL      = "#4fa3e0"
+CPU_COL   = "#6c6a75"
+FONT      = "'Inter', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+MONO      = "'IBM Plex Mono', 'SFMono-Regular', 'Courier New', monospace"
 
-BG = "#0b0b0d"
-CARD_BG = "#17161a"
-CARD_BG_ALT = "#1e1c20"
-ACCENT = "#f5820d"
-TEXT = "#f2f1ee"
-TEXT_MUTED = "#9c9a97"
-PILL_INACTIVE_BG = "#1c1b1f"
-PILL_ACTIVE_BG = "#ffffff"
-PILL_ACTIVE_TEXT = "#0b0b0d"
-FONT = "'Inter', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
-FONT_MONO = "'IBM Plex Mono', 'Courier New', monospace"
-VERDE_ESTADO = "#3ecf8e"
+# rampa térmica (para acentos)
+THERMAL   = f"linear-gradient(90deg,{EMBER_LO},{EMBER},{EMBER_HI},{GOLD})"
 
-BASE_DIR = Path(__file__).parent
-RUTA_DATOS = BASE_DIR / "data" / "benchmark_consolidado.csv"
+COLOR_MODELO = {"Random Forest": COOL, "XGBoost": EMBER, "Red Neuronal": SIGNAL}
 ORDEN_PCT = ["30%", "60%", "100%"]
-COLOR_MODELO = {"Random Forest": "#4fa3e0", "XGBoost": "#f5820d", "Red Neuronal": "#3ecf8e"}
 
-# ---------------------------------------------------------------------------
-# 2. Datos y cálculos (igual que la versión anterior)
-# ---------------------------------------------------------------------------
+BASE_DIR   = Path(__file__).parent
+RUTA_DATOS = BASE_DIR / "data" / "benchmark_consolidado.csv"
+RUTA_CAL   = BASE_DIR / "data" / "comparacion_modelos.csv"
+RUTA_CNN   = BASE_DIR / "data" / "metricas_cnn.json"
 
+# ===========================================================================
+# 2. Carga de datos (solo lectura, sin alterar nada)
+# ===========================================================================
 def es_gpu(backend):
-    return any(x in backend for x in ["GPU", "cuda", "cuML"])
+    return any(x in str(backend) for x in ["GPU", "cuda", "cuML"])
 
 
 def cargar_datos():
@@ -57,6 +71,17 @@ def cargar_datos():
     return df
 
 
+def cargar_calidad():
+    return pd.read_csv(RUTA_CAL) if RUTA_CAL.exists() else pd.DataFrame()
+
+
+def cargar_cnn():
+    if not RUTA_CNN.exists():
+        return {}
+    with open(RUTA_CNN, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def calcular_speedup(df):
     filas = []
     for (modelo, pct), grupo in df.groupby(["modelo", "dataset_pct"]):
@@ -65,7 +90,8 @@ def calcular_speedup(df):
         if cpu.empty or gpu.empty:
             continue
         t_cpu, t_gpu = cpu["tiempo_s"].iloc[0], gpu["tiempo_s"].iloc[0]
-        filas.append({"modelo": modelo, "dataset_pct": pct, "speedup": t_cpu / t_gpu if t_gpu else None})
+        filas.append({"modelo": modelo, "dataset_pct": pct,
+                      "speedup": t_cpu / t_gpu if t_gpu else None})
     return pd.DataFrame(filas)
 
 
@@ -82,396 +108,567 @@ def calcular_escalabilidad(df):
             t0 = tiempo_base.loc[clave]
             indice = (fila["tiempo_s"] / t0) / (fila["filas_train"] / f0)
             resultado.append({"modelo": fila["modelo"], "dispositivo": fila["dispositivo"],
-                               "dataset_pct": pct, "indice_escalabilidad": indice})
+                              "dataset_pct": pct, "indice_escalabilidad": indice})
     return pd.DataFrame(resultado)
 
 
-datos = cargar_datos()
-speedups = calcular_speedup(datos) if not datos.empty else pd.DataFrame()
+datos         = cargar_datos()
+speedups      = calcular_speedup(datos) if not datos.empty else pd.DataFrame()
 escalabilidad = calcular_escalabilidad(datos) if not datos.empty else pd.DataFrame()
+calidad       = cargar_calidad()
+cnn           = cargar_cnn()
 
-# ---------------------------------------------------------------------------
-# 3. Figuras (tema oscuro)
-# ---------------------------------------------------------------------------
-
-LAYOUT_OSCURO = dict(
-    template="plotly_dark", paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
-    font=dict(color=TEXT, family="Inter, -apple-system, Segoe UI, Roboto, Arial, sans-serif"),
-    margin=dict(t=20, l=60, r=20, b=50),
-    legend=dict(orientation="h", y=-0.25, bgcolor="rgba(0,0,0,0)"),
+# ===========================================================================
+# 3. Figuras (rampa térmica, retícula tenue)
+# ===========================================================================
+LAYOUT = dict(
+    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color=INK, family="Inter, sans-serif", size=13),
+    margin=dict(t=26, l=64, r=24, b=54),
+    legend=dict(orientation="h", y=-0.24, bgcolor="rgba(0,0,0,0)", font=dict(size=12)),
+    xaxis=dict(gridcolor=HAIR, zerolinecolor=HAIR, linecolor=HAIR),
+    yaxis=dict(gridcolor=HAIR, zerolinecolor=HAIR, linecolor=HAIR),
+    hoverlabel=dict(bgcolor=CARD_2, font_size=13, font_family="IBM Plex Mono, monospace",
+                    bordercolor=HAIR),
 )
 
 
-def figura_vacia(mensaje):
+def figura_vacia(msg):
     fig = go.Figure()
-    fig.add_annotation(text=mensaje, showarrow=False, font=dict(size=14, color=TEXT_MUTED))
-    fig.update_layout(**LAYOUT_OSCURO)
+    fig.add_annotation(text=msg, showarrow=False, font=dict(size=14, color=MUTED))
+    fig.update_layout(**LAYOUT)
     return fig
 
 
 def figura_speedup():
     if speedups.empty:
-        return figura_vacia("No se encontraron datos de speedup")
+        return figura_vacia("Sin datos de speedup")
     fig = go.Figure()
     for modelo in speedups["modelo"].unique():
-        sub = speedups[speedups["modelo"] == modelo].set_index("dataset_pct").reindex(ORDEN_PCT).reset_index()
-        fig.add_trace(go.Scatter(x=sub["dataset_pct"], y=sub["speedup"], mode="lines+markers",
-                                  name=modelo, line=dict(color=COLOR_MODELO.get(modelo), width=3),
-                                  marker=dict(size=10)))
-    fig.add_hline(y=1, line_dash="dash", line_color=TEXT_MUTED, annotation_text="CPU = GPU")
-    fig.update_layout(yaxis_title="Speedup (GPU / CPU)", xaxis_title="Tamaño del dataset", **LAYOUT_OSCURO)
+        sub = (speedups[speedups["modelo"] == modelo]
+               .set_index("dataset_pct").reindex(ORDEN_PCT).reset_index())
+        fig.add_trace(go.Scatter(
+            x=sub["dataset_pct"], y=sub["speedup"], mode="lines+markers+text",
+            text=[f"{v:.1f}×" if pd.notna(v) else "" for v in sub["speedup"]],
+            textposition="top center", textfont=dict(size=12, color=INK, family="IBM Plex Mono"),
+            name=modelo, line=dict(color=COLOR_MODELO.get(modelo), width=3.5),
+            marker=dict(size=11)))
+    fig.add_hline(y=1, line_dash="dot", line_color=FAINT,
+                  annotation_text="CPU = GPU", annotation_font_color=FAINT)
+    fig.update_layout(yaxis_title="Speedup (GPU / CPU)", xaxis_title="Tamaño del dataset", **LAYOUT)
     return fig
 
 
 def figura_throughput():
     if datos.empty:
-        return figura_vacia("No se encontraron datos")
+        return figura_vacia("Sin datos")
     fig = go.Figure()
     for modelo in datos["modelo"].unique():
-        for dispositivo, estilo in [("CPU", "dot"), ("GPU", "solid")]:
-            sub = (datos[(datos["modelo"] == modelo) & (datos["dispositivo"] == dispositivo)]
+        for disp, estilo in [("CPU", "dot"), ("GPU", "solid")]:
+            sub = (datos[(datos["modelo"] == modelo) & (datos["dispositivo"] == disp)]
                    .set_index("dataset_pct").reindex(ORDEN_PCT).reset_index())
-            fig.add_trace(go.Scatter(x=sub["dataset_pct"], y=sub["throughput_reg_s"], mode="lines+markers",
-                                      name=f"{modelo} ({dispositivo})",
-                                      line=dict(color=COLOR_MODELO.get(modelo), dash=estilo, width=2),
-                                      marker=dict(size=8)))
+            fig.add_trace(go.Scatter(
+                x=sub["dataset_pct"], y=sub["throughput_reg_s"], mode="lines+markers",
+                name=f"{modelo} · {disp}",
+                line=dict(color=COLOR_MODELO.get(modelo), dash=estilo, width=2.5),
+                marker=dict(size=8)))
     fig.update_layout(yaxis_title="Throughput (registros/s)", yaxis_type="log",
-                       xaxis_title="Tamaño del dataset", **LAYOUT_OSCURO)
+                      xaxis_title="Tamaño del dataset", **LAYOUT)
     return fig
 
 
-def figura_tiempos(dataset_pct):
+def figura_tiempos(pct):
     if datos.empty:
-        return figura_vacia("No se encontraron datos")
-    sub = datos[datos["dataset_pct"] == dataset_pct]
+        return figura_vacia("Sin datos")
+    sub = datos[datos["dataset_pct"] == pct]
     fig = go.Figure()
-    for dispositivo, color in [("CPU", "#5c5a57"), ("GPU", ACCENT)]:
-        parte = sub[sub["dispositivo"] == dispositivo]
-        fig.add_trace(go.Bar(x=parte["modelo"], y=parte["tiempo_s"], name=dispositivo, marker_color=color,
-                              text=parte["tiempo_s"].round(1), textposition="outside"))
-    fig.update_layout(barmode="group", yaxis_title="Tiempo (s) — escala log", yaxis_type="log", **LAYOUT_OSCURO)
+    for disp, color in [("CPU", CPU_COL), ("GPU", EMBER)]:
+        parte = sub[sub["dispositivo"] == disp]
+        fig.add_trace(go.Bar(x=parte["modelo"], y=parte["tiempo_s"], name=disp,
+                             marker_color=color, marker_line_width=0,
+                             text=parte["tiempo_s"].round(1), textposition="outside",
+                             textfont=dict(color=INK, family="IBM Plex Mono")))
+    fig.update_layout(barmode="group", yaxis_title="Tiempo (s) — escala log",
+                      yaxis_type="log", **LAYOUT)
     return fig
 
 
-def figura_recursos(dataset_pct, metrica):
+def figura_recursos(pct, metrica):
     if datos.empty:
-        return figura_vacia("No se encontraron datos")
-    sub = datos[datos["dataset_pct"] == dataset_pct]
-    fig = go.Figure(go.Bar(x=sub["modelo"] + " — " + sub["dispositivo"], y=sub[metrica],
-                            marker_color=[COLOR_MODELO.get(m, "#888") for m in sub["modelo"]]))
-    etiquetas = {"ram_pico_mb": "RAM pico (MB)", "gpu_mem_pico_mb": "Memoria GPU pico (MB)",
-                 "gpu_util_promedio_pct": "Uso promedio de GPU (%) — eficiencia"}
-    fig.update_layout(yaxis_title=etiquetas.get(metrica, metrica), xaxis_tickangle=-30, **LAYOUT_OSCURO)
+        return figura_vacia("Sin datos")
+    sub = datos[datos["dataset_pct"] == pct].copy()
+    sub["etq"] = sub["modelo"] + " · " + sub["dispositivo"]
+    colores = [EMBER if d == "GPU" else CPU_COL for d in sub["dispositivo"]]
+    fig = go.Figure(go.Bar(x=sub["etq"], y=sub[metrica], marker_color=colores, marker_line_width=0,
+                           text=sub[metrica].round(1), textposition="outside",
+                           textfont=dict(color=INK, family="IBM Plex Mono")))
+    et = {"ram_pico_mb": "RAM pico (MB)", "gpu_mem_pico_mb": "Memoria GPU pico (MB)",
+          "gpu_util_promedio_pct": "Uso promedio de GPU (%) — eficiencia"}
+    fig.update_layout(yaxis_title=et.get(metrica, metrica), xaxis_tickangle=-25, **LAYOUT)
     return fig
 
 
 def figura_escalabilidad():
     if escalabilidad.empty:
-        return figura_vacia("No se encontraron datos")
+        return figura_vacia("Sin datos")
     fig = go.Figure()
     for modelo in escalabilidad["modelo"].unique():
-        for dispositivo, estilo in [("CPU", "dot"), ("GPU", "solid")]:
-            sub = (escalabilidad[(escalabilidad["modelo"] == modelo) & (escalabilidad["dispositivo"] == dispositivo)]
+        for disp, estilo in [("CPU", "dot"), ("GPU", "solid")]:
+            sub = (escalabilidad[(escalabilidad["modelo"] == modelo) &
+                                 (escalabilidad["dispositivo"] == disp)]
                    .set_index("dataset_pct").reindex(["60%", "100%"]).reset_index())
-            fig.add_trace(go.Scatter(x=sub["dataset_pct"], y=sub["indice_escalabilidad"], mode="lines+markers",
-                                      name=f"{modelo} ({dispositivo})",
-                                      line=dict(color=COLOR_MODELO.get(modelo), dash=estilo, width=2),
-                                      marker=dict(size=8)))
-    fig.add_hline(y=1, line_dash="dash", line_color=TEXT_MUTED, annotation_text="Crecimiento lineal (ideal)")
+            fig.add_trace(go.Scatter(
+                x=sub["dataset_pct"], y=sub["indice_escalabilidad"], mode="lines+markers",
+                name=f"{modelo} · {disp}",
+                line=dict(color=COLOR_MODELO.get(modelo), dash=estilo, width=2.5),
+                marker=dict(size=8)))
+    fig.add_hline(y=1, line_dash="dot", line_color=FAINT,
+                  annotation_text="Crecimiento lineal (ideal)", annotation_font_color=FAINT)
     fig.update_layout(yaxis_title="Índice de escalabilidad (1.0 = lineal)",
-                       xaxis_title="Tamaño del dataset (relativo a 30%)", **LAYOUT_OSCURO)
+                      xaxis_title="Tamaño del dataset", **LAYOUT)
     return fig
 
 
-# ---------------------------------------------------------------------------
-# 4. Definición de "slides"
-# ---------------------------------------------------------------------------
+def figura_calidad(metrica):
+    if calidad.empty:
+        return figura_vacia("Sin datos de calidad")
+    df = calidad.copy()
+    x, y = list(df["modelo"]), list(df[metrica])
+    colores = [COLOR_MODELO.get(m, "#888") for m in x]
+    if cnn and metrica in cnn:
+        x, y, colores = x + ["CNN (imágenes)"], y + [cnn[metrica]], colores + [GOLD]
+    fig = go.Figure(go.Bar(x=x, y=y, marker_color=colores, marker_line_width=0,
+                           text=[f"{v:.3f}" for v in y], textposition="outside",
+                           textfont=dict(color=INK, family="IBM Plex Mono")))
+    et = {"f1": "F1-score", "roc_auc": "ROC-AUC", "precision": "Precisión",
+          "recall": "Recall (exhaustividad)", "accuracy": "Exactitud"}
+    fig.update_layout(yaxis_title=et.get(metrica, metrica), **LAYOUT)
+    fig.update_yaxes(range=[0, 1.06])
+    return fig
 
-def tarjeta_kpi(etiqueta, valor):
+
+def figura_calidad_radar():
+    if calidad.empty:
+        return figura_vacia("Sin datos")
+    metricas = ["precision", "recall", "f1", "roc_auc"]
+    etiquetas = ["Precisión", "Recall", "F1", "ROC-AUC"]
+    fig = go.Figure()
+    for _, fila in calidad.iterrows():
+        vals = [fila[m] for m in metricas]
+        fig.add_trace(go.Scatterpolar(
+            r=vals + [vals[0]], theta=etiquetas + [etiquetas[0]], fill="toself",
+            name=fila["modelo"], line=dict(color=COLOR_MODELO.get(fila["modelo"], "#888"), width=2),
+            opacity=0.85))
+    fig.update_layout(
+        polar=dict(bgcolor="rgba(0,0,0,0)",
+                   radialaxis=dict(range=[0.6, 1.0], gridcolor=HAIR, tickfont=dict(color=FAINT, size=10)),
+                   angularaxis=dict(gridcolor=HAIR, tickfont=dict(color=MUTED))),
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=INK, family="Inter, sans-serif"),
+        legend=dict(orientation="h", y=-0.14, bgcolor="rgba(0,0,0,0)"),
+        margin=dict(t=30, l=44, r=44, b=44))
+    return fig
+
+
+# ===========================================================================
+# 4. Componentes visuales
+# ===========================================================================
+def micro(texto, color=MUTED):
+    return html.Div(texto, style={"fontSize": "10.5px", "color": color, "textTransform": "uppercase",
+                                  "letterSpacing": "0.22em", "fontWeight": "700",
+                                  "fontFamily": MONO})
+
+
+def metric(label, valor, sub=None, color=INK, unidad=None):
+    val = [html.Span(valor, style={"fontSize": "46px", "fontWeight": "800", "color": color,
+                                   "fontFamily": MONO, "lineHeight": "0.95", "letterSpacing": "-0.02em"})]
+    if unidad:
+        val.append(html.Span(unidad, style={"fontSize": "18px", "color": MUTED,
+                             "fontFamily": MONO, "marginLeft": "6px"}))
+    hijos = [
+        html.Div(style={"height": "2px", "width": "40px", "background": THERMAL, "marginBottom": "14px"}),
+        micro(label),
+        html.Div(val, style={"marginTop": "10px"}),
+    ]
+    if sub:
+        hijos.append(html.Div(sub, style={"fontSize": "12px", "color": MUTED, "marginTop": "8px",
+                                          "fontFamily": MONO}))
+    return html.Div(hijos, style={
+        "background": CARD, "borderRadius": "4px", "padding": "22px 22px 24px", "flex": "1",
+        "minWidth": "170px", "border": f"1px solid {HAIR}", "position": "relative", "overflow": "hidden"})
+
+
+def panel(children, titulo=None, sub=None):
+    cab = []
+    if titulo:
+        cab.append(html.Div(titulo, style={"color": INK, "fontSize": "15px", "fontWeight": "700",
+                                          "marginBottom": "3px", "letterSpacing": "0.01em"}))
+    if sub:
+        cab.append(html.Div(sub, style={"color": MUTED, "fontSize": "12.5px", "marginBottom": "16px"}))
+    cuerpo = children if isinstance(children, list) else [children]
+    return html.Div(cab + cuerpo, style={
+        "background": CARD, "borderRadius": "4px", "padding": "22px", "border": f"1px solid {HAIR}"})
+
+
+def nota(indice, titulo, texto, color=EMBER):
     return html.Div([
-        html.Div(etiqueta, style={"fontSize": "12px", "color": TEXT_MUTED, "textTransform": "uppercase",
-                                   "letterSpacing": "0.06em", "fontWeight": "600"}),
-        html.Div(valor, style={"fontSize": "26px", "fontWeight": "600", "color": TEXT, "marginTop": "6px",
-                                "fontFamily": FONT_MONO}),
-    ], style={"background": CARD_BG_ALT, "borderRadius": "12px", "padding": "20px 22px", "flex": "1",
-              "border": "1px solid #242226", "boxShadow": "0 6px 18px rgba(0,0,0,0.25)"})
-
-
-def tarjeta_panel(children):
-    return html.Div(children, style={"background": CARD_BG, "borderRadius": "14px",
-                                      "padding": "20px", "border": "1px solid #2a282d",
-                                      "boxShadow": "0 8px 24px rgba(0,0,0,0.3)"})
-
-
-def slide_portada():
-    if not speedups.empty:
-        fila_max = speedups.loc[speedups["speedup"].idxmax()]
-        max_speedup, modelo_max, pct_max = fila_max["speedup"], fila_max["modelo"], fila_max["dataset_pct"]
-    else:
-        max_speedup, modelo_max, pct_max = 0, "-", "-"
-    return html.Div([
-        html.Div("Análisis de Rendimiento", style={"color": ACCENT, "fontSize": "36px", "fontWeight": "800"}),
-        html.Div("CPU vs GPU · Random Forest, XGBoost y Red Neuronal · 30/60/100% del dataset",
-                  style={"color": TEXT_MUTED, "fontSize": "15px", "marginTop": "6px", "marginBottom": "28px"}),
         html.Div([
-            tarjeta_kpi("Registros (100%)", "36.8 M"),
-            tarjeta_kpi("Modelos comparados", "3"),
-            tarjeta_kpi("Mayor speedup GPU", f"{max_speedup:.1f}x ({modelo_max}, {pct_max})"),
-        ], style={"display": "flex", "gap": "16px", "marginBottom": "20px"}),
-        tarjeta_panel([
-            html.Div([html.Span(className="status-dot"), "Hardware verificado"],
-                     style={"color": ACCENT, "fontWeight": "700", "marginBottom": "8px"}),
-            html.Div("Nodo nukwa-01.cnca · GPU NVIDIA V100 · 24 núcleos CPU — confirmado con sacct/scontrol en Kabré.",
-                      style={"color": TEXT, "fontSize": "14px", "fontFamily": FONT_MONO}),
+            html.Span(indice, style={"fontFamily": MONO, "fontSize": "11px", "color": color,
+                                     "fontWeight": "700", "letterSpacing": "0.1em"}),
+            html.Div(style={"flex": "1", "height": "1px", "background": HAIR, "marginLeft": "10px"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "12px"}),
+        html.Div(titulo, style={"color": INK, "fontWeight": "700", "fontSize": "14.5px", "marginBottom": "7px"}),
+        html.Div(texto, style={"color": MUTED, "fontSize": "12.5px", "lineHeight": "1.55"}),
+    ], style={"background": CARD_2, "borderRadius": "4px", "padding": "18px 20px", "flex": "1",
+              "minWidth": "220px", "borderTop": f"2px solid {color}"})
+
+
+def seccion(indice, titulo, sub=None):
+    hijos = [
+        html.Div([
+            html.Span(indice, style={"fontFamily": MONO, "fontSize": "58px", "fontWeight": "800",
+                                     "color": "transparent", "WebkitTextStroke": f"1px {HAIR}",
+                                     "lineHeight": "0.8", "marginRight": "18px"}),
+            html.Div([
+                micro("Sección", EMBER),
+                html.Div(titulo, style={"color": INK, "fontSize": "27px", "fontWeight": "800",
+                                        "marginTop": "4px", "letterSpacing": "-0.01em"}),
+            ]),
+        ], style={"display": "flex", "alignItems": "center"}),
+    ]
+    if sub:
+        hijos.append(html.Div(sub, style={"color": MUTED, "fontSize": "13.5px", "marginTop": "10px",
+                                          "maxWidth": "680px"}))
+    return html.Div(hijos, style={"marginBottom": "22px"})
+
+
+# ===========================================================================
+# 5. Slides
+# ===========================================================================
+def _mejor(df, col):
+    return None if df.empty else df.loc[df[col].idxmax()]
+
+
+def slide_resumen():
+    max_sp = _mejor(speedups, "speedup") if not speedups.empty else None
+    mejor_f1 = _mejor(calidad, "f1") if not calidad.empty else None
+    cnn_f1 = cnn.get("f1") if cnn else None
+    return html.Div([
+        html.Div([
+            micro("Informe de resultados · Proyecto final", EMBER),
+            html.Div([
+                html.Span("Reducción de "),
+                html.Span("Falsas Alarmas", className="thermal-text"),
+                html.Br(),
+                html.Span("en la Detección Satelital de Incendios"),
+            ], style={"color": INK, "fontSize": "38px", "fontWeight": "800", "marginTop": "14px",
+                      "lineHeight": "1.08", "letterSpacing": "-0.02em"}),
+            html.Div("Análisis multivariable acelerado por GPU sobre el clúster HPC Kabré (CeNAT). "
+                     "52.5 millones de detecciones VIIRS y 42 850 imágenes satelitales.",
+                     style={"color": MUTED, "fontSize": "15px", "marginTop": "16px", "maxWidth": "640px"}),
+        ], style={"marginBottom": "30px"}),
+        html.Div([
+            metric("Registros procesados", "52.5", sub="NASA FIRMS · VIIRS", unidad="M"),
+            metric("Mayor speedup GPU", f"{max_sp['speedup']:.1f}" if max_sp is not None else "—",
+                   sub=f"{max_sp['modelo']} · {max_sp['dataset_pct']}" if max_sp is not None else "",
+                   color=EMBER, unidad="×"),
+            metric("Mejor F1 tabular", f"{mejor_f1['f1']:.3f}" if mejor_f1 is not None else "—",
+                   sub=mejor_f1["modelo"] if mejor_f1 is not None else "", color=SIGNAL),
+            metric("F1 de la CNN", f"{cnn_f1:.3f}" if cnn_f1 else "—",
+                   sub="Clasificación de imágenes", color=GOLD),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "18px"}),
+        panel([
+            html.Div([html.Span(className="dot"),
+                      html.Span("Ejecutado y verificado en Kabré (CeNAT)",
+                                style={"color": SIGNAL, "fontWeight": "700", "letterSpacing": "0.02em"})],
+                     style={"marginBottom": "10px"}),
+            html.Div("Partición KURA — CPU 40 núcleos — preprocesamiento paralelo   //   "
+                     "Partición NUKWA — GPU NVIDIA — modelado   //   Gestor SLURM",
+                     style={"color": MUTED, "fontSize": "12.5px", "fontFamily": MONO}),
         ]),
+    ])
+
+
+def slide_problema():
+    return html.Div([
+        seccion("01", "El problema: falsas alarmas",
+                "No toda detección satelital de calor es un incendio real. Reducir los falsos positivos es el objetivo del proyecto."),
+        html.Div([
+            metric("Detecciones válidas", "87.85", sub="confianza media / alta", color=SIGNAL, unidad="%"),
+            metric("Probables falsas alarmas", "12.15", sub="confianza baja (proxy)", color=EMBER, unidad="%"),
+            metric("Desbalance de clases", "7:1", sub="por eso no se usa accuracy"),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "16px"}),
+        panel(html.Div([
+            nota("01 / 03", "El contraste térmico separa las clases",
+                 "ΔT = brillo del foco − fondo. Alta confianza: 60.8 K de contraste. "
+                 "Baja confianza: solo 28.1 K. Un foco que apenas destaca de su entorno es sospechoso.", EMBER),
+            nota("02 / 03", "Enfoque multivariable",
+                 "En lugar de un único umbral, se combinan brillo, ΔT, potencia radiativa (FRP), "
+                 "geometría del píxel y contexto temporal para decidir mejor.", SIGNAL),
+            nota("03 / 03", "Dos ramas independientes",
+                 "Clasificación tabular de falsas alarmas (52.5 M registros) y clasificación de "
+                 "imágenes con CNN, resueltas en paralelo sobre HPC.", GOLD),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}), titulo="Cómo se aborda"),
+    ])
+
+
+def slide_calidad():
+    return html.Div([
+        seccion("02", "Calidad de los modelos",
+                "Tres modelos tabulares (GPU) para falsas alarmas y una CNN para imágenes. Todos con ROC-AUC entre 0.98 y 0.99."),
+        html.Div(dcc.RadioItems(id="sel-metrica-calidad",
+                 options=[{"label": " F1", "value": "f1"}, {"label": " ROC-AUC", "value": "roc_auc"},
+                          {"label": " Precisión", "value": "precision"}, {"label": " Recall", "value": "recall"}],
+                 value="f1", inline=True, labelStyle=R_LABEL, inputStyle=R_INPUT),
+                 style={"marginBottom": "14px"}),
+        panel(dcc.Graph(id="g-calidad", config={"displayModeBar": False}), titulo="Comparación por métrica"),
+        html.Div(style={"height": "14px"}),
+        panel(dcc.Graph(figure=figura_calidad_radar(), config={"displayModeBar": False}),
+              titulo="Perfil comparativo", sub="Cada modelo en las cuatro métricas clave. Más área es mejor equilibrio."),
     ])
 
 
 def slide_speedup():
     return html.Div([
-        html.Div("Speedup GPU vs CPU", style={"color": ACCENT, "fontSize": "28px", "fontWeight": "800", "marginBottom": "16px"}),
-        tarjeta_panel(dcc.Graph(figure=figura_speedup(), config={"displayModeBar": False})),
+        seccion("03", "Aceleración por GPU", "Cuántas veces más rápido entrena cada modelo en GPU frente a CPU."),
+        panel(dcc.Graph(figure=figura_speedup(), config={"displayModeBar": False})),
+        html.Div(style={"height": "14px"}),
+        html.Div([
+            nota("A", "Hasta 6.8× más rápido",
+                 "XGBoost y Random Forest alcanzan speedups de 6.6 a 6.8× a escala completa.", EMBER),
+            nota("B", "No todo escala igual",
+                 "La red neuronal gana menos por época: su cuello de botella es la carga de datos, no el cómputo.", SIGNAL),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
     ])
 
 
 def slide_throughput():
     return html.Div([
-        html.Div("Throughput (registros/segundo)", style={"color": ACCENT, "fontSize": "28px", "fontWeight": "800", "marginBottom": "6px"}),
-        html.Div("Escala logarítmica — GPU puede ser 10-100x más grande que CPU.",
-                  style={"color": TEXT_MUTED, "fontSize": "13px", "marginBottom": "16px"}),
-        tarjeta_panel(dcc.Graph(figure=figura_throughput(), config={"displayModeBar": False})),
+        seccion("04", "Throughput", "Registros procesados por segundo (escala logarítmica)."),
+        panel(dcc.Graph(figure=figura_throughput(), config={"displayModeBar": False})),
     ])
-
-
-RADIO_LABEL_STYLE = {"color": TEXT, "marginRight": "18px", "cursor": "pointer", "fontSize": "14px"}
-RADIO_INPUT_STYLE = {"marginRight": "6px", "cursor": "pointer"}
 
 
 def slide_tiempos():
     return html.Div([
-        html.Div("Tiempo de entrenamiento", style={"color": ACCENT, "fontSize": "28px", "fontWeight": "800", "marginBottom": "16px"}),
-        dcc.RadioItems(id="selector-pct-tiempo", options=[{"label": p, "value": p} for p in ORDEN_PCT],
+        seccion("05", "Tiempo de entrenamiento", "Comparación CPU vs GPU por modelo y escala de datos."),
+        dcc.RadioItems(id="sel-pct-tiempo", options=[{"label": f" {p}", "value": p} for p in ORDEN_PCT],
                        value="100%", inline=True, style={"marginBottom": "14px"},
-                       labelStyle=RADIO_LABEL_STYLE, inputStyle=RADIO_INPUT_STYLE),
-        tarjeta_panel(dcc.Graph(id="grafico-tiempos", config={"displayModeBar": False})),
+                       labelStyle=R_LABEL, inputStyle=R_INPUT),
+        panel(dcc.Graph(id="g-tiempos", config={"displayModeBar": False})),
     ])
 
 
 def slide_recursos():
     return html.Div([
-        html.Div("Uso de recursos y eficiencia", style={"color": ACCENT, "fontSize": "28px", "fontWeight": "800", "marginBottom": "6px"}),
-        html.Div("Eficiencia = % real de uso de GPU (nvidia-smi). Ser rápido no siempre es usar bien el hardware.",
-                  style={"color": TEXT_MUTED, "fontSize": "13px", "marginBottom": "14px"}),
+        seccion("06", "Uso de recursos y eficiencia",
+                "Ser rápido no es lo mismo que usar bien el hardware. La utilización de GPU lo revela."),
         html.Div([
-            dcc.RadioItems(id="selector-pct-recursos", options=[{"label": p, "value": p} for p in ORDEN_PCT],
-                           value="100%", inline=True, labelStyle=RADIO_LABEL_STYLE, inputStyle=RADIO_INPUT_STYLE),
-            dcc.Dropdown(id="selector-metrica-recursos", options=[
-                {"label": "RAM pico (MB)", "value": "ram_pico_mb"},
-                {"label": "Memoria GPU pico (MB)", "value": "gpu_mem_pico_mb"},
+            dcc.RadioItems(id="sel-pct-recursos", options=[{"label": f" {p}", "value": p} for p in ORDEN_PCT],
+                           value="100%", inline=True, labelStyle=R_LABEL, inputStyle=R_INPUT),
+            dcc.Dropdown(id="sel-metrica-recursos", options=[
                 {"label": "Uso de GPU (%) — eficiencia", "value": "gpu_util_promedio_pct"},
-            ], value="gpu_util_promedio_pct", clearable=False, style={"width": "360px", "marginTop": "10px", "color": "#111"}),
+                {"label": "RAM pico (MB)", "value": "ram_pico_mb"},
+                {"label": "Memoria GPU pico (MB)", "value": "gpu_mem_pico_mb"}],
+                value="gpu_util_promedio_pct", clearable=False,
+                style={"width": "340px", "marginTop": "10px", "color": "#111"}),
         ], style={"marginBottom": "16px"}),
-        tarjeta_panel(dcc.Graph(id="grafico-recursos", config={"displayModeBar": False})),
+        panel(dcc.Graph(id="g-recursos", config={"displayModeBar": False})),
+        html.Div(style={"height": "14px"}),
+        html.Div([
+            nota("XGB", "XGBoost — 96 % de GPU", "Aprovecha casi al máximo el acelerador.", SIGNAL),
+            nota("RN", "Red neuronal — 38 %", "La GPU espera datos; el cuello está en la CPU que los prepara.", GOLD),
+            nota("RF", "Random Forest — 59 %", "Uso intermedio del acelerador.", COOL),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
     ])
 
 
 def slide_escalabilidad():
     return html.Div([
-        html.Div("Escalabilidad por volumen de datos", style={"color": ACCENT, "fontSize": "28px", "fontWeight": "800", "marginBottom": "6px"}),
-        html.Div("< 1.0 = escala mejor de lo esperado. > 1.0 = escala peor de lo esperado.",
-                  style={"color": TEXT_MUTED, "fontSize": "13px", "marginBottom": "16px"}),
-        tarjeta_panel(dcc.Graph(figure=figura_escalabilidad(), config={"displayModeBar": False})),
+        seccion("07", "Escalabilidad por volumen",
+                "Menor que 1.0 escala mejor de lo esperado. Mayor que 1.0 escala peor de lo esperado."),
+        panel(dcc.Graph(figure=figura_escalabilidad(), config={"displayModeBar": False})),
     ])
 
 
+def slide_conclusiones():
+    return html.Div([
+        seccion("08", "Hallazgos principales", "Lo que este proyecto demuestra sobre cómputo paralelo y distribuido."),
+        html.Div([
+            nota("01 / 04", "Preprocesamiento: 45× de speedup",
+                 "El preprocesamiento paralelo (Polars) alcanza hasta 45× frente a la línea base secuencial, "
+                 "con saturación a los 16 hilos (ley de Amdahl).", EMBER),
+            nota("02 / 04", "Modelos de alta calidad",
+                 "ROC-AUC de 0.98 en falsas alarmas y 0.99 en imágenes (CNN, F1 0.96). La hipótesis del ΔT se confirma.", SIGNAL),
+            nota("03 / 04", "La GPU no es magia",
+                 "Su eficiencia depende del algoritmo y del flujo de datos: XGBoost 96 % vs. red neuronal 38 % de uso.", GOLD),
+            nota("04 / 04", "Límites del paralelismo",
+                 "Memoria compartida (Polars) satura; procesos (Dask) fallan por memoria; la GPU depende de la alimentación de datos.", COOL),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
+    ])
+
+
+R_LABEL = {"color": INK, "marginRight": "18px", "cursor": "pointer", "fontSize": "13px",
+           "fontWeight": "600", "fontFamily": MONO}
+R_INPUT = {"marginRight": "6px", "cursor": "pointer", "accentColor": EMBER}
+
 SLIDES = [
-    {"id": "portada", "pill": "Resumen", "render": slide_portada},
-    {"id": "speedup", "pill": "Speedup", "render": slide_speedup},
-    {"id": "throughput", "pill": "Throughput", "render": slide_throughput},
-    {"id": "tiempos", "pill": "Tiempos", "render": slide_tiempos},
-    {"id": "recursos", "pill": "Eficiencia", "render": slide_recursos},
+    {"id": "resumen",       "pill": "Resumen",       "render": slide_resumen},
+    {"id": "problema",      "pill": "El problema",   "render": slide_problema},
+    {"id": "calidad",       "pill": "Modelos",       "render": slide_calidad},
+    {"id": "speedup",       "pill": "Speedup",       "render": slide_speedup},
+    {"id": "throughput",    "pill": "Throughput",    "render": slide_throughput},
+    {"id": "tiempos",       "pill": "Tiempos",       "render": slide_tiempos},
+    {"id": "recursos",      "pill": "Eficiencia",    "render": slide_recursos},
     {"id": "escalabilidad", "pill": "Escalabilidad", "render": slide_escalabilidad},
+    {"id": "conclusiones",  "pill": "Hallazgos",     "render": slide_conclusiones},
 ]
 SLIDE_IDS = [s["id"] for s in SLIDES]
 
-# ---------------------------------------------------------------------------
-# 5. App y layout general
-# ---------------------------------------------------------------------------
-
+# ===========================================================================
+# 6. App
+# ===========================================================================
 app = Dash(__name__, suppress_callback_exceptions=True)
-app.title = "Rendimiento — Detección de Incendios Forestales"
+app.title = "Detección de Incendios — Panel de Resultados"
+server = app.server
 
 app.index_string = f"""
 <!DOCTYPE html>
 <html>
 <head>
-{{%metas%}}
-<title>{{%title%}}</title>
-{{%favicon%}}
-{{%css%}}
+{{%metas%}}<title>{{%title%}}</title>{{%favicon%}}{{%css%}}
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body {{ background: {BG}; margin: 0; font-family: {FONT}; }}
-  ::-webkit-scrollbar {{ width: 10px; }}
-  ::-webkit-scrollbar-thumb {{ background: #2a282d; border-radius: 6px; }}
-
-  .nav-btn, .pill-btn, .csv-btn {{
-    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  body {{ margin:0; background:{BG}; font-family:{FONT};
+    background-image:
+      radial-gradient(900px 480px at 88% -8%, rgba(255,94,26,0.10), transparent 60%),
+      linear-gradient(0deg, {HAIR} 1px, transparent 1px),
+      linear-gradient(90deg, {HAIR} 1px, transparent 1px);
+    background-size: auto, 46px 46px, 46px 46px;
+    background-position: center, center, center;
   }}
-  .nav-btn:hover, .csv-btn:hover {{ transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }}
-  .nav-btn:active, .csv-btn:active {{ transform: translateY(0px); }}
-  .pill-btn:hover {{ box-shadow: 0 2px 10px rgba(0,0,0,0.3); }}
-
-  .nav-btn:focus-visible, .pill-btn:focus-visible, .csv-btn:focus-visible {{
-    outline: 2px solid {ACCENT}; outline-offset: 2px;
-  }}
-
-  .status-dot {{
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: {VERDE_ESTADO}; margin-right: 8px; position: relative; top: -1px;
-    box-shadow: 0 0 0 0 rgba(62,207,142,0.6);
-    animation: pulso 2.2s ease-out infinite;
-  }}
-  @keyframes pulso {{
-    0%   {{ box-shadow: 0 0 0 0 rgba(62,207,142,0.55); }}
-    70%  {{ box-shadow: 0 0 0 8px rgba(62,207,142,0); }}
-    100% {{ box-shadow: 0 0 0 0 rgba(62,207,142,0); }}
-  }}
-  @media (prefers-reduced-motion: reduce) {{
-    .status-dot {{ animation: none; }}
-    .nav-btn, .pill-btn, .csv-btn {{ transition: none; }}
-  }}
+  ::-webkit-scrollbar {{ width:10px; }} ::-webkit-scrollbar-thumb {{ background:#232128; border-radius:0; }}
+  .thermal-text {{ background:{THERMAL}; -webkit-background-clip:text; background-clip:text;
+                   -webkit-text-fill-color:transparent; }}
+  .pill-btn, .nav-btn {{ transition:transform 120ms ease, border-color 150ms ease, background 150ms ease; }}
+  .nav-btn:hover {{ border-color:{EMBER}; }}
+  .pill-btn:hover {{ border-color:{EMBER}; }}
+  .dot {{ display:inline-block; width:8px; height:8px; border-radius:50%; background:{SIGNAL};
+          margin-right:9px; box-shadow:0 0 0 0 rgba(53,224,139,.6); animation:pulse 2.2s ease-out infinite; position:relative; top:-1px; }}
+  @keyframes pulse {{ 0%{{box-shadow:0 0 0 0 rgba(53,224,139,.5)}} 70%{{box-shadow:0 0 0 9px rgba(53,224,139,0)}} 100%{{box-shadow:0 0 0 0 rgba(53,224,139,0)}} }}
+  .scan {{ position:fixed; top:0; left:0; right:0; height:2px; z-index:50;
+           background:linear-gradient(90deg, transparent, {EMBER}, transparent);
+           opacity:0.55; animation:scan 6s linear infinite; }}
+  @keyframes scan {{ 0%{{transform:translateY(0)}} 100%{{transform:translateY(100vh)}} }}
+  @media (prefers-reduced-motion: reduce) {{ .dot,.scan{{animation:none}} .scan{{display:none}} }}
 </style>
 </head>
-<body>
-{{%app_entry%}}
-<footer>{{%config%}}{{%scripts%}}{{%renderer%}}</footer>
-</body>
+<body><div class="scan"></div>{{%app_entry%}}<footer>{{%config%}}{{%scripts%}}{{%renderer%}}</footer></body>
 </html>
 """
 
-PILL_STYLE = {
-    "background": PILL_INACTIVE_BG, "color": TEXT, "border": "none", "borderRadius": "999px",
-    "padding": "8px 18px", "fontSize": "13px", "fontWeight": "600", "marginRight": "8px",
-    "cursor": "pointer",
-}
-PILL_STYLE_ACTIVE = {**PILL_STYLE, "background": PILL_ACTIVE_BG, "color": PILL_ACTIVE_TEXT}
-
-NAV_BTN_STYLE = {
-    "background": CARD_BG_ALT, "color": TEXT, "border": "1px solid #2a282d", "borderRadius": "50%",
-    "width": "38px", "height": "38px", "cursor": "pointer", "fontSize": "16px",
-}
+PILL = {"background": "transparent", "color": MUTED, "border": f"1px solid {HAIR}", "borderRadius": "2px",
+        "padding": "8px 15px", "fontSize": "11.5px", "fontWeight": "700", "marginRight": "8px",
+        "marginBottom": "8px", "cursor": "pointer", "fontFamily": MONO, "letterSpacing": "0.08em",
+        "textTransform": "uppercase"}
+PILL_ON = {**PILL, "background": CARD_2, "color": INK, "borderColor": EMBER, "borderLeft": f"2px solid {EMBER}"}
+NAV = {"background": "transparent", "color": INK, "border": f"1px solid {HAIR}", "borderRadius": "2px",
+       "width": "42px", "height": "42px", "cursor": "pointer", "fontSize": "15px"}
 
 app.layout = html.Div([
-    dcc.Store(id="slide-idx", data=0),
-
-    # Barra superior
+    dcc.Store(id="idx", data=0),
     html.Div([
         html.Div([
-            html.Div("Detección de Incendios Forestales", style={"color": TEXT, "fontWeight": "800", "fontSize": "16px"}),
-            html.Div("Análisis de Rendimiento · TTCT0017, Computación Paralela y Distribuida",
-                      style={"color": TEXT_MUTED, "fontSize": "12px"}),
-        ]),
+            html.Div(style={"width": "12px", "height": "12px", "background": THERMAL,
+                            "marginRight": "12px", "borderRadius": "1px"}),
+            html.Div([
+                html.Div("DETECCIÓN DE INCENDIOS FORESTALES",
+                         style={"color": INK, "fontWeight": "700", "fontSize": "14px",
+                                "fontFamily": MONO, "letterSpacing": "0.14em"}),
+                html.Div("TTCT0017 · Computación Paralela y Distribuida · LEAD University",
+                         style={"color": FAINT, "fontSize": "11px", "marginTop": "3px", "fontFamily": MONO}),
+            ]),
+        ], style={"display": "flex", "alignItems": "center"}),
         html.Div([
-            html.Button("◀", id="btn-prev", n_clicks=0, className="nav-btn", style=NAV_BTN_STYLE),
-            html.Button("▶", id="btn-next", n_clicks=0, className="nav-btn", style={**NAV_BTN_STYLE, "marginLeft": "8px"}),
-            html.Button("⬇ CSV", id="btn-csv", n_clicks=0, className="csv-btn",
-                        style={**NAV_BTN_STYLE, "width": "auto", "borderRadius": "999px",
-                               "padding": "0 16px", "marginLeft": "8px", "color": ACCENT}),
-            dcc.Download(id="descarga-csv"),
+            html.Button("<", id="prev", n_clicks=0, className="nav-btn", style=NAV),
+            html.Button(">", id="next", n_clicks=0, className="nav-btn", style={**NAV, "marginLeft": "8px"}),
         ], style={"display": "flex", "alignItems": "center"}),
     ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
-              "padding": "18px 28px", "borderBottom": f"1px solid #221f22"}),
-
-    # Píldoras de navegación (declaradas desde el inicio, no se recrean)
+              "padding": "20px 34px", "borderBottom": f"1px solid {HAIR}",
+              "position": "sticky", "top": "0", "background": "rgba(7,7,10,0.9)",
+              "backdropFilter": "blur(10px)", "zIndex": "20"}),
+    html.Div([html.Button(s["pill"], id=f"pill-{s['id']}", n_clicks=0, className="pill-btn",
+                          style=PILL_ON if i == 0 else PILL) for i, s in enumerate(SLIDES)],
+             style={"padding": "18px 34px 4px 34px", "display": "flex", "flexWrap": "wrap",
+                    "maxWidth": "1060px", "margin": "0 auto"}),
+    html.Div([html.Div(s["render"](), id=f"slide-{s['id']}",
+                       style={"display": "block"} if i == 0 else {"display": "none"})
+              for i, s in enumerate(SLIDES)],
+             style={"padding": "16px 34px 12px 34px", "maxWidth": "1060px", "margin": "0 auto"}),
     html.Div([
-        html.Button(s["pill"], id=f"pill-{s['id']}", n_clicks=0, className="pill-btn",
-                     style=PILL_STYLE_ACTIVE if i == 0 else PILL_STYLE)
-        for i, s in enumerate(SLIDES)
-    ], id="pill-nav", style={"padding": "16px 28px 0px 28px", "display": "flex", "flexWrap": "wrap"}),
-
-    # Todas las slides existen desde el arranque; se muestran/ocultan con CSS
-    html.Div([
-        html.Div(s["render"](), id=f"slide-{s['id']}",
-                  style={"display": "block"} if i == 0 else {"display": "none"})
-        for i, s in enumerate(SLIDES)
-    ], id="slide-content", style={"padding": "20px 28px 10px 28px", "maxWidth": "980px"}),
-
-    # Barra de progreso
-    html.Div([
-        html.Div(id="progress-track", style={"flex": "1", "height": "4px", "background": "#221f22",
-                                              "borderRadius": "4px", "overflow": "hidden"},
-                  children=html.Div(id="progress-fill", style={"height": "100%", "background": ACCENT})),
-        html.Div(id="progress-label", style={"color": TEXT_MUTED, "fontSize": "13px", "marginLeft": "14px", "whiteSpace": "nowrap"}),
-    ], style={"display": "flex", "alignItems": "center", "padding": "16px 28px 24px 28px"}),
-
-], style={"background": BG, "minHeight": "100vh"})
+        html.Div(id="lbl", style={"fontSize": "10.5px", "color": FAINT, "textTransform": "uppercase",
+                                  "letterSpacing": "0.22em", "fontWeight": "700", "fontFamily": MONO,
+                                  "whiteSpace": "nowrap"}),
+        html.Div(style={"flex": "1", "height": "3px", "background": HAIR, "marginLeft": "16px", "overflow": "hidden"},
+                 children=html.Div(id="fill", style={"height": "100%", "background": THERMAL})),
+    ], style={"display": "flex", "alignItems": "center", "padding": "14px 34px 30px 34px",
+              "maxWidth": "1060px", "margin": "0 auto"}),
+], style={"minHeight": "100vh"})
 
 
-# ---------------------------------------------------------------------------
-# 6. Callbacks de navegación
-# ---------------------------------------------------------------------------
-
-@app.callback(
-    Output("slide-idx", "data"),
-    Input("btn-prev", "n_clicks"), Input("btn-next", "n_clicks"),
-    State("slide-idx", "data"),
-    prevent_initial_call=True,
-)
-def navegar(n_prev, n_next, idx):
-    trig = ctx.triggered_id
-    if trig == "btn-prev":
+# ===========================================================================
+# 7. Callbacks
+# ===========================================================================
+@app.callback(Output("idx", "data"), Input("prev", "n_clicks"), Input("next", "n_clicks"),
+              State("idx", "data"), prevent_initial_call=True)
+def navegar(p, n, idx):
+    t = ctx.triggered_id
+    if t == "prev":
         return max(0, idx - 1)
-    if trig == "btn-next":
+    if t == "next":
         return min(len(SLIDES) - 1, idx + 1)
     return idx
 
 
-@app.callback(
-    Output("slide-idx", "data", allow_duplicate=True),
-    [Input(f"pill-{sid}", "n_clicks") for sid in SLIDE_IDS],
-    prevent_initial_call=True,
-)
-def ir_a_pill(*_clicks):
-    trig = ctx.triggered_id
-    if trig and trig.startswith("pill-"):
-        return SLIDE_IDS.index(trig.replace("pill-", ""))
+@app.callback(Output("idx", "data", allow_duplicate=True),
+              [Input(f"pill-{sid}", "n_clicks") for sid in SLIDE_IDS], prevent_initial_call=True)
+def ir(*_):
+    t = ctx.triggered_id
+    if t and t.startswith("pill-"):
+        return SLIDE_IDS.index(t.replace("pill-", ""))
     return 0
 
 
-_OUTPUTS_VISTA = (
-    [Output(f"slide-{sid}", "style") for sid in SLIDE_IDS]
-    + [Output(f"pill-{sid}", "style") for sid in SLIDE_IDS]
-    + [Output("progress-fill", "style"), Output("progress-label", "children")]
-)
+_OUT = ([Output(f"slide-{s}", "style") for s in SLIDE_IDS]
+        + [Output(f"pill-{s}", "style") for s in SLIDE_IDS]
+        + [Output("fill", "style"), Output("lbl", "children")])
 
 
-@app.callback(*_OUTPUTS_VISTA, Input("slide-idx", "data"))
-def actualizar_vista(idx):
+@app.callback(*_OUT, Input("idx", "data"))
+def vista(idx):
     idx = idx or 0
-    slide_styles = [{"display": "block"} if i == idx else {"display": "none"} for i in range(len(SLIDES))]
-    pill_styles = [PILL_STYLE_ACTIVE if i == idx else PILL_STYLE for i in range(len(SLIDES))]
+    ss = [{"display": "block"} if i == idx else {"display": "none"} for i in range(len(SLIDES))]
+    ps = [PILL_ON if i == idx else PILL for i in range(len(SLIDES))]
     pct = int(round((idx + 1) / len(SLIDES) * 100))
-    fill_style = {"height": "100%", "background": ACCENT, "width": f"{pct}%"}
-    label = f"{idx + 1} / {len(SLIDES)}"
-    return (*slide_styles, *pill_styles, fill_style, label)
+    return (*ss, *ps, {"height": "100%", "background": THERMAL, "width": f"{pct}%"},
+            f"{idx + 1:02d} / {len(SLIDES):02d}")
 
 
-@app.callback(Output("grafico-tiempos", "figure"), Input("selector-pct-tiempo", "value"))
-def actualizar_tiempos(pct):
-    return figura_tiempos(pct)
+@app.callback(Output("g-calidad", "figure"), Input("sel-metrica-calidad", "value"))
+def cb_calidad(m):
+    return figura_calidad(m)
 
 
-@app.callback(Output("grafico-recursos", "figure"),
-              Input("selector-pct-recursos", "value"), Input("selector-metrica-recursos", "value"))
-def actualizar_recursos(pct, metrica):
-    return figura_recursos(pct, metrica)
+@app.callback(Output("g-tiempos", "figure"), Input("sel-pct-tiempo", "value"))
+def cb_tiempos(p):
+    return figura_tiempos(p)
 
 
-@app.callback(Output("descarga-csv", "data"), Input("btn-csv", "n_clicks"), prevent_initial_call=True)
-def descargar_csv(n_clicks):
-    return dcc.send_file(str(RUTA_DATOS))
+@app.callback(Output("g-recursos", "figure"),
+              Input("sel-pct-recursos", "value"), Input("sel-metrica-recursos", "value"))
+def cb_recursos(p, m):
+    return figura_recursos(p, m)
 
 
 if __name__ == "__main__":

@@ -44,8 +44,7 @@
 
 \begin{document}
 
-\title{Detección de Incendios Forestales con Imágenes Satelitales:\\
-Implementación Inicial y Evaluación Preliminar de Rendimiento\\
+\title{Reducción de Falsas Alarmas en la Detección Satelital de Incendios Forestales mediante Análisis Multivariable Acelerado por GPU sobre HPC\\
 \large{Entrega 2: Implementación Inicial y Validación Parcial}}
 
 \author{
@@ -53,7 +52,8 @@ Implementación Inicial y Evaluación Preliminar de Rendimiento\\
 \IEEEauthorblockA{\textit{Curso TTCT0017 -- Computación Paralela y Distribuida}\\
 \textit{LEAD University}\\
 Profesor: Johansell Villalobos Cubillo\\
-San José, Costa Rica}
+San José, Costa Rica\\
+Repositorio: \url{https://github.com/Allan1492/Deteccion_Incendios_Forestales_Imag_Satelitales}}
 }
 
 \maketitle
@@ -316,6 +316,18 @@ Baja (\texttt{l})    & 28.11 & 12.79 & 6\,382\,160 \\
 
 \subsection{Trabajo pendiente}
 Para la Entrega~3 se contempla: el entrenamiento del clasificador tabular con RAPIDS cuML sobre la variable objetivo definida; la implementación de la red neuronal convolucional en PyTorch sobre el conjunto de imágenes; la evaluación de rendimiento con GPU y en configuración multinodo; y la construcción del \textit{dashboard} interactivo con Plotly y Dash.
+
+% ============================== REPRODUCIBILIDAD ==============================
+\section{Reproducibilidad}
+El código y los datos están disponibles en el repositorio del proyecto. Los pasos mínimos para reproducir los resultados de esta entrega son:
+\begin{enumerate}
+\item Montar el entorno en el clúster: \texttt{bash entrega2\_benchmark/setup\_kabre.sh} (instala Python 3.11, Polars, Dask y dependencias).
+\item Verificar la integridad del Parquet: \texttt{python3 verificar\_parquet.py <ruta>.parquet}.
+\item Lanzar el \textit{benchmark} en Kabré: \texttt{sbatch entrega2\_benchmark/submit\_kabre.slurm}.
+\item Generar tablas y figuras: \texttt{python3 analizar\_resultados.py <resultados>.csv --figuras figuras/}.
+\item Ejecutar el análisis exploratorio: \texttt{python3 eda/eda\_real.py <ruta>.parquet eda\_salida}.
+\end{enumerate}
+El \textit{notebook} de preprocesamiento y las instrucciones detalladas se encuentran en el \texttt{README} del repositorio.
 
 % ============================== VIII ==============================
 \section{Conclusión}
